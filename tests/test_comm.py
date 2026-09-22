@@ -569,5 +569,47 @@ class TestDownload(unittest.TestCase):
             c.close()
 
 
+    def test_set_person_detect_roundtrip(self):
+        cfg = (b'<IPCConfig><AlarmConfig>'
+               b'<VideoPD Enable="1" Sensitivity="4"><Polygon PointCnt="0"></Polygon>'
+               b'<AlarmAction><AlarmOutputAction Enable="1" /></AlarmAction></VideoPD>'
+               b'</AlarmConfig></IPCConfig>')
+        with FakeCommServer() as srv:
+            srv.download_content = cfg
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            c.set_person_detect(False, sensitivity=6, confirm=True)
+            c.close()
+        code, sect = srv.config_sets[0]
+        self.assertEqual(code, "829")
+        self.assertIn(b'Enable="0"', sect)
+        self.assertIn(b'Sensitivity="6"', sect)
+        self.assertIn(b"AlarmAction", sect)          # children preserved
+
+    def test_set_person_detect_requires_confirm(self):
+        from anjoy.exceptions import AnjoyError
+        c = AnjoyCommClient("x"); c.sock = _FakeSock()
+        with self.assertRaises(AnjoyError):
+            c.set_person_detect(True)
+
+    def test_set_face_detect_roundtrip_and_confirm(self):
+        from anjoy.exceptions import AnjoyError
+        c = AnjoyCommClient("x"); c.sock = _FakeSock()
+        with self.assertRaises(AnjoyError):
+            c.set_face_detect(True)                   # confirm gate
+        cfg = (b'<IPCConfig><AlarmConfig>'
+               b'<FaceDetect Enable="0"><EnableTimeList/></FaceDetect>'
+               b'</AlarmConfig></IPCConfig>')
+        with FakeCommServer() as srv:
+            srv.download_content = cfg
+            c2 = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c2.connect(); c2.login()
+            c2.set_face_detect(True, confirm=True)
+            c2.close()
+        code, sect = srv.config_sets[0]
+        self.assertEqual(code, "832")
+        self.assertIn(b'Enable="1"', sect)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -477,34 +477,71 @@ class AnjoyCommClient:
         body = f'<MiscConfig Language="{_attr(language)}" />'
         return self.set_config_section(const.CFG_MISC, body, confirm=True)
 
+    def _rmw_section(self, tag: str, code: str, attrs: dict, *, confirm: bool):
+        """Read-modify-write one config section: download the current ``<tag>``
+        element, overwrite the given *attrs* (skipping ``None`` values), and write
+        it back via :meth:`set_config_section`. Every other attribute and child
+        element is preserved, so a toggle never clobbers grids/schedules/actions.
+        """
+        cfg = self.get_config()
+        t = re.escape(tag).encode()
+        m = re.search(rb"<" + t + rb"\b.*?</" + t + rb">", cfg, re.S)
+        if m is None:
+            m = re.search(rb"<" + t + rb"\b[^>]*/>", cfg)          # self-closing form
+        if m is None:
+            raise AnjoyError(f"device config has no <{tag}> section")
+        root = ET.fromstring(m.group(0).decode("gb2312", "replace"))
+        for k, v in attrs.items():
+            if v is not None:
+                root.set(k, str(v))
+        return self.set_config_section(code, ET.tostring(root, encoding="unicode"),
+                                       confirm=confirm)
+
     def set_motion(self, enable: bool, *, sensitivity: int | None = None,
                    alarm_threshold: int | None = None, confirm: bool = False):
         """Enable/disable and tune motion detection
         (``AlarmConfig/MotionDetectAlarm``, code 822).
 
-        Read-modify-write: the current ``<MotionDetectAlarm>`` is downloaded and
-        only the given fields change, so the detection grid (``BlockConfig``),
-        day/night thresholds, arming schedule and alarm actions are preserved.
-        *enable* toggles detection; *sensitivity* and *alarm_threshold* (ints)
-        are optional. Verified live on MTF45-4G_AF (Enable 0↔1). Writes —
+        Read-modify-write: the detection grid (``BlockConfig``), day/night
+        thresholds, arming schedule and alarm actions are preserved. *enable*
+        toggles detection; *sensitivity* and *alarm_threshold* (ints) are
+        optional. Verified live on MTF45-4G_AF (Enable 0↔1). Writes —
         ``confirm=True``.
         """
         if not confirm:
             raise AnjoyError("set_motion writes device config; pass confirm=True")
-        cfg = self.get_config()
-        m = re.search(rb"<MotionDetectAlarm\b.*?</MotionDetectAlarm>", cfg, re.S)
-        if m is None:
-            m = re.search(rb"<MotionDetectAlarm\b[^>]*/>", cfg)   # self-closing form
-        if m is None:
-            raise AnjoyError("device config has no <MotionDetectAlarm> section")
-        root = ET.fromstring(m.group(0).decode("gb2312", "replace"))
-        root.set("Enable", "1" if enable else "0")
-        if sensitivity is not None:
-            root.set("Sensitivity", str(int(sensitivity)))
-        if alarm_threshold is not None:
-            root.set("AlarmThreshold", str(int(alarm_threshold)))
-        body = ET.tostring(root, encoding="unicode")
-        return self.set_config_section(const.CFG_MOTION, body, confirm=True)
+        return self._rmw_section("MotionDetectAlarm", const.CFG_MOTION, {
+            "Enable": 1 if enable else 0,
+            "Sensitivity": None if sensitivity is None else int(sensitivity),
+            "AlarmThreshold": None if alarm_threshold is None else int(alarm_threshold),
+        }, confirm=True)
+
+    def set_person_detect(self, enable: bool, *, sensitivity: int | None = None,
+                          confirm: bool = False):
+        """Enable/disable AI person detection (``AlarmConfig/VideoPD``, code 829).
+        Read-modify-write (polygon/schedule/actions preserved); *sensitivity*
+        optional. Verified live on MTF45-4G_AF (Enable 1↔0). Writes —
+        ``confirm=True``.
+        """
+        if not confirm:
+            raise AnjoyError("set_person_detect writes device config; pass confirm=True")
+        return self._rmw_section("VideoPD", const.CFG_PERSON_DETECT, {
+            "Enable": 1 if enable else 0,
+            "Sensitivity": None if sensitivity is None else int(sensitivity),
+        }, confirm=True)
+
+    def set_face_detect(self, enable: bool, *, sensitivity: int | None = None,
+                        confirm: bool = False):
+        """Enable/disable AI face detection (``AlarmConfig/FaceDetect``, code 832).
+        Read-modify-write (schedule/actions preserved); *sensitivity* optional.
+        Verified live on MTF45-4G_AF (Enable 0↔1). Writes — ``confirm=True``.
+        """
+        if not confirm:
+            raise AnjoyError("set_face_detect writes device config; pass confirm=True")
+        return self._rmw_section("FaceDetect", const.CFG_FACE_DETECT, {
+            "Enable": 1 if enable else 0,
+            "Sensitivity": None if sensitivity is None else int(sensitivity),
+        }, confirm=True)
 
     def snapshot(self, stream: int = 0, quality: int = 100) -> bytes:
         """Capture a JPEG snapshot and return its bytes. Captured from AjDevTools

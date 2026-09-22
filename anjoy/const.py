@@ -157,6 +157,8 @@ CFG_OVERLAY = "525"      # MediaConfig/Video/Overlay — OSD title + timestamp
 CFG_MAINTAIN = "228"     # SystemConfig/MaintainConfig — scheduled auto-reboot
 CFG_MISC = "227"         # SystemConfig/MiscConfig — device language
 CFG_MOTION = "822"       # AlarmConfig/MotionDetectAlarm — motion detection
+CFG_PERSON_DETECT = "829"  # AlarmConfig/VideoPD — AI person detection
+CFG_FACE_DETECT = "832"    # AlarmConfig/FaceDetect — AI face detection
 
 # -- error codes ------------------------------------------------------------
 ANJOY_ERRORS = {
