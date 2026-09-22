@@ -557,25 +557,39 @@ class AnjoyCommClient:
         return [dict(acc.attrib) for acc in root.findall("Account")]
 
     def set_password(self, password: str, *, username: str = "admin",
-                     group: str = "Administrator", status: str = "Enable",
                      confirm: bool = False):
         """Set a user account's password (``SystemConfig/UserConfig``, code 223).
 
-        The password is sent in **plaintext** — the device computes the stored
-        ``EncryptPwd`` (no client-side hashing; captured from AjDevTools "Batch Set
-        Password"). Verified live on MTF45-4G_AF (admin password change then
-        revert). *username* selects the account (default ``admin``); *group* and
-        *status* mirror the account fields.
+        Read-modify-write of *username*'s ``<Account>``: the plaintext password is
+        sent (the device computes the stored ``EncryptPwd`` — no client-side
+        hashing; captured from AjDevTools "Batch Set Password") while the account's
+        existing ``Group``/``Status`` are preserved, so **a password reset never
+        changes privileges**. Verified live on MTF45-4G_AF (admin password change
+        then revert). If *username* is the account this client logs in as,
+        :attr:`password` is updated so later reconnects use the new password.
 
-        ⚠️ This is the login for **every** service (binary control, ONVIF, web),
-        so changing ``admin`` changes them all — guarded by ``confirm=True``.
+        ⚠️ The account is the login for **every** service (binary control, ONVIF,
+        web), so a change affects them all — guarded by ``confirm=True``.
         """
         if not confirm:
             raise AnjoyError("set_password changes the device login; pass confirm=True")
-        body = (f'<UserConfig><Account Username="{_attr(username)}" '
-                f'Password="{_attr(password)}" Group="{_attr(group)}" '
-                f'Status="{_attr(status)}" /></UserConfig>')
-        return self.set_config_section(const.CFG_USER, body, confirm=True)
+        cfg = self.get_config()
+        m = re.search(rb"<UserConfig\b.*?</UserConfig>", cfg, re.S)
+        if m is None:
+            raise AnjoyError("device config has no <UserConfig> section")
+        root = ET.fromstring(m.group(0).decode("gb2312", "replace"))
+        acct = next((a for a in root.findall("Account")
+                     if a.get("Username") == username), None)
+        if acct is None:
+            raise AnjoyError(f"no account named {username!r} on the device")
+        acct.attrib.pop("EncryptPwd", None)     # replace the stored hash…
+        acct.set("Password", password)          # …with plaintext; device re-encrypts
+        wrapper = ET.Element("UserConfig")       # send only this account (device
+        wrapper.append(acct)                     # updates by Username, like the tool)
+        self.set_config_section(const.CFG_USER,
+                                ET.tostring(wrapper, encoding="unicode"), confirm=True)
+        if username == self.user:                # keep our own creds in sync
+            self.password = password
 
     def snapshot(self, stream: int = 0, quality: int = 100) -> bytes:
         """Capture a JPEG snapshot and return its bytes. Captured from AjDevTools

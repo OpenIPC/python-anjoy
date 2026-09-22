@@ -626,16 +626,60 @@ class TestDownload(unittest.TestCase):
         self.assertEqual(users[0]["Group"], "Administrator")
         self.assertEqual(users[1]["Status"], "Disable")
 
-    def test_set_password_frame_plaintext(self):
-        from anjoy.comm import MAGIC
-        ack = build_envelope("SYSTEM_CONFIG_SET_MESSAGE", "223")
-        c = AnjoyCommClient("x"); c.sessionid = "S"
-        c.sock = _FakeSock(MAGIC + struct.pack("<I", len(ack)) + ack)
-        c.set_password("s3cret", confirm=True)
-        self.assertIn(b'Msg_code="223"', c.sock.sent)
-        self.assertIn(b'Username="admin"', c.sock.sent)
-        self.assertIn(b'Password="s3cret"', c.sock.sent)   # device hashes it, we send plaintext
-        self.assertIn(b'Group="Administrator"', c.sock.sent)
+    @staticmethod
+    def _user_cfg(*accounts):
+        return (b'<IPCConfig><SystemConfig><UserConfig>' + "".join(accounts).encode()
+                + b'</UserConfig></SystemConfig></IPCConfig>')
+
+    def test_set_password_plaintext_preserves_group(self):
+        with FakeCommServer() as srv:
+            srv.download_content = self._user_cfg(
+                '<Account Username="admin" EncryptPwd="OLD" Group="Administrator" Status="Enable" />')
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            c.set_password("s3cret", confirm=True)
+            c.close()
+        code, sect = srv.config_sets[0]
+        self.assertEqual(code, "223")
+        self.assertIn(b'Username="admin"', sect)
+        self.assertIn(b'Password="s3cret"', sect)          # plaintext; device re-encrypts
+        self.assertIn(b'Group="Administrator"', sect)      # preserved from the account
+        self.assertNotIn(b"EncryptPwd", sect)              # stale hash dropped
+
+    def test_set_password_does_not_escalate_guest(self):
+        with FakeCommServer() as srv:
+            srv.download_content = self._user_cfg(
+                '<Account Username="admin" EncryptPwd="A" Group="Administrator" Status="Enable" />',
+                '<Account Username="guest" EncryptPwd="G" Group="User" Status="Enable" />')
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            c.set_password("pw", username="guest", confirm=True)
+            c.close()
+        _, sect = srv.config_sets[0]
+        self.assertIn(b'Username="guest"', sect)
+        self.assertIn(b'Group="User"', sect)               # NOT elevated
+        self.assertNotIn(b"Administrator", sect)
+
+    def test_set_password_syncs_own_credential(self):
+        with FakeCommServer() as srv:
+            srv.download_content = self._user_cfg(
+                '<Account Username="admin" EncryptPwd="A" Group="Administrator" Status="Enable" />')
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            c.set_password("newpass", confirm=True)
+            self.assertEqual(c.password, "newpass")        # reconnect uses the new password
+            c.close()
+
+    def test_set_password_unknown_user_raises(self):
+        from anjoy.exceptions import AnjoyError
+        with FakeCommServer() as srv:
+            srv.download_content = self._user_cfg(
+                '<Account Username="admin" EncryptPwd="A" Group="Administrator" Status="Enable" />')
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            with self.assertRaises(AnjoyError):
+                c.set_password("x", username="nobody", confirm=True)
+            c.close()
 
     def test_set_password_requires_confirm(self):
         from anjoy.exceptions import AnjoyError
@@ -646,13 +690,15 @@ class TestDownload(unittest.TestCase):
 
     def test_set_password_escapes_special_chars(self):
         import xml.etree.ElementTree as ET
-        from anjoy.comm import MAGIC
-        ack = build_envelope("SYSTEM_CONFIG_SET_MESSAGE", "223")
-        c = AnjoyCommClient("x"); c.sessionid = "S"
-        c.sock = _FakeSock(MAGIC + struct.pack("<I", len(ack)) + ack)
-        c.set_password('a"&<b', confirm=True)
-        # the sent frame must remain well-formed XML despite special chars
-        ET.fromstring(c.sock.sent[8:].decode("gb2312").lstrip())
+        with FakeCommServer() as srv:
+            srv.download_content = self._user_cfg(
+                '<Account Username="admin" EncryptPwd="A" Group="Administrator" Status="Enable" />')
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            c.set_password('a"&<b', confirm=True)
+            c.close()
+        _, sect = srv.config_sets[0]
+        ET.fromstring(sect.decode("gb2312"))               # still well-formed XML
 
 
 if __name__ == "__main__":
