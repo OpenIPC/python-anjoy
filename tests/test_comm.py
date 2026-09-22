@@ -287,6 +287,11 @@ class TestExecUserCmd(unittest.TestCase):
         with self.assertRaises(AnjoyError):
             c.upload_file(b"data", confirm=True)
 
+    def test_exec_rejects_non_executing_name(self):
+        c = AnjoyCommClient("x"); c.sock = _FakeSock()
+        with self.assertRaises(ValueError):
+            c.exec_cmd("true", remote_name="whatever.xml", confirm=True)
+
 
 if __name__ == "__main__":
     unittest.main()

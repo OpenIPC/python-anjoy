@@ -39,6 +39,10 @@ from .exceptions import AnjoyError, LoginError
 MAGIC = b"\x58\x91\x58\x51"
 # Sanity cap so a bogus/hostile length field cannot force a huge alloc.
 MAX_FRAME = 16 * 1024 * 1024
+# Upload basenames the device processes as an OEM-default config and whose
+# embedded EXECUTE_USER_CMD it actually RUNS (confirmed on MTF45-4G_AF).
+EXEC_TRIGGER_NAMES = ("defaultconfig.xml", "config.default.xml",
+                      "default_2_priority.xml")
 _XML_DECL = '<?xml version="1.0" encoding="GB2312" ?>'
 
 
@@ -306,6 +310,11 @@ class AnjoyCommClient:
         """
         if not confirm:
             raise AnjoyError("exec_cmd runs arbitrary shell on the camera; pass confirm=True")
+        if remote_name not in EXEC_TRIGGER_NAMES:
+            raise ValueError(
+                f"remote_name {remote_name!r} is not an executing OEM-default name; "
+                f"commands would be stored, not run. Use one of {EXEC_TRIGGER_NAMES} "
+                "(or call upload_file directly to just store a file).")
         content = _exec_body(commands).encode("gb2312")
         return self.upload_file(content, remote_name, file_type=0, confirm=True)
 
