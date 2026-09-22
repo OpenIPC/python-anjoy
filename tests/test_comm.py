@@ -437,5 +437,56 @@ class TestDownload(unittest.TestCase):
         self.assertIn(b'TitleUtf8="54657374"', sect)
 
 
+    def test_set_maintenance_frame(self):
+        from anjoy.comm import MAGIC
+        ack = build_envelope("SYSTEM_CONFIG_SET_MESSAGE", "228")
+        c = AnjoyCommClient("x"); c.sessionid = "S"
+        c.sock = _FakeSock(MAGIC + struct.pack("<I", len(ack)) + ack)
+        c.set_maintenance(True, day=3, time="04:15:00", confirm=True)
+        self.assertIn(b'Msg_code="228"', c.sock.sent)
+        self.assertIn(b'<MaintainConfig Enable="1" Day="3" Time="04:15:00" />', c.sock.sent)
+
+    def test_set_maintenance_requires_confirm(self):
+        from anjoy.exceptions import AnjoyError
+        c = AnjoyCommClient("x"); c.sock = _FakeSock()
+        with self.assertRaises(AnjoyError):
+            c.set_maintenance(False)
+
+    def test_set_title_roundtrip_preserves_siblings(self):
+        cfg = (b'<?xml version="1.0" encoding="GB2312" ?><IPCConfig><MediaConfig><Video>'
+               b'<Overlay Enable="1" Style="3">'
+               b'<TimeOverlay PosX="1" PosY="1" Format="yyyy-mm-dd hh:mm:ss" />'
+               b'<TitleOverlay PosX="0" PosY="0" TitleUtf8="43616d657261" Title="43616d657261" />'
+               b'</Overlay></Video></MediaConfig></IPCConfig>')
+        with FakeCommServer() as srv:
+            srv.download_content = cfg
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            c.set_title("Cam2", confirm=True)          # hex("Cam2") = 43616d32
+            c.close()
+        self.assertEqual(len(srv.config_sets), 1)
+        code, sect = srv.config_sets[0]
+        self.assertEqual(code, "525")
+        self.assertIn(b'TitleUtf8="43616d32"', sect)
+        self.assertIn(b'Title="43616d32"', sect)
+        self.assertIn(b"TimeOverlay", sect)            # other overlay settings kept
+
+    def test_set_title_requires_confirm(self):
+        from anjoy.exceptions import AnjoyError
+        c = AnjoyCommClient("x"); c.sock = _FakeSock()
+        with self.assertRaises(AnjoyError):
+            c.set_title("x")
+
+    def test_set_title_no_overlay_raises(self):
+        from anjoy.exceptions import AnjoyError
+        with FakeCommServer() as srv:
+            srv.download_content = b'<IPCConfig><SystemConfig/></IPCConfig>'
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            with self.assertRaises(AnjoyError):
+                c.set_title("x", confirm=True)
+            c.close()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -418,6 +418,50 @@ class AnjoyCommClient:
                 f"{payload[:200].decode('gb2312', 'replace')}")
         return mt, xml
 
+    # -- typed config setters (thin wrappers over set_config_section) --------
+    def set_title(self, title: str, *, confirm: bool = False):
+        """Set the OSD title text (``MediaConfig/Video/Overlay``, code 525).
+
+        Read-modify-write: the current ``<Overlay>`` section is downloaded and
+        only ``<TitleOverlay>``'s title is changed, so the rest of the OSD
+        (position, font, timestamp, any extra user-OSD lines) is preserved. The
+        title is stored hex-encoded — ``TitleUtf8`` as the hex of the UTF-8 bytes
+        and the legacy ``Title`` (when present) as the hex of the GB2312 bytes.
+        Verified live on MTF45-4G_AF. Writes — ``confirm=True``.
+        """
+        if not confirm:
+            raise AnjoyError("set_title writes device config; pass confirm=True")
+        try:
+            title.encode("gb2312")            # device charset for the legacy field
+        except UnicodeEncodeError as e:
+            raise AnjoyError(f"title is not GB2312-encodable: {title!r}") from e
+        cfg = self.get_config()
+        m = re.search(rb"<Overlay\b.*?</Overlay>", cfg, re.S)
+        if not m:
+            raise AnjoyError("device config has no <Overlay> section")
+        root = ET.fromstring(m.group(0).decode("gb2312", "replace"))
+        t = root.find("TitleOverlay")
+        if t is None:
+            raise AnjoyError("device Overlay config has no <TitleOverlay>")
+        t.set("TitleUtf8", title.encode("utf-8").hex())
+        if t.get("Title") is not None:
+            t.set("Title", title.encode("gb2312").hex())
+        body = ET.tostring(root, encoding="unicode")
+        return self.set_config_section(const.CFG_OVERLAY, body, confirm=True)
+
+    def set_maintenance(self, enable: bool, *, day: int = 7,
+                        time: str = "00:00:00", confirm: bool = False):
+        """Set the scheduled auto-reboot (``SystemConfig/MaintainConfig``, code
+        228). *enable* turns it on/off; *day* is the vendor day selector
+        (``7`` = every day) and *time* is ``HH:MM:SS``. Captured from AjDevTools
+        "Batch Timing Maintenance" and verified live. Writes — ``confirm=True``.
+        """
+        if not confirm:
+            raise AnjoyError("set_maintenance writes device config; pass confirm=True")
+        body = (f'<MaintainConfig Enable="{1 if enable else 0}" '
+                f'Day="{int(day)}" Time="{_attr(time)}" />')
+        return self.set_config_section(const.CFG_MAINTAIN, body, confirm=True)
+
     def snapshot(self, stream: int = 0, quality: int = 100) -> bytes:
         """Capture a JPEG snapshot and return its bytes. Captured from AjDevTools
         "Batch Snap Picture" and verified live.
