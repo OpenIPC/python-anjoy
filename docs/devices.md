@@ -64,25 +64,34 @@ end-to-end against the device.
   detected"). Raw capture: `../MC-F45-4MP-PTZ18x/aj8091-capture.{tx,rx}.bin` in the
   research repo.
 
-#### EXECUTE_USER_CMD (remote shell) — partially wired, execution UNVERIFIED
-The vendor's remote-shell mechanism. The device's own parser
-(`get_user_cmd_from_xml` in `mainctrl`) reads
-`<EXECUTE_USER_CMD><CMD DATA="cmd"/>…</EXECUTE_USER_CMD>` and runs each `DATA`
-command. It lives in the **config-file / OEM-default-config** code path
-(next to `SET_OEM_DEFAULT_CONFIG`, `config.default.xml`, `FIRMWARE_CONTROL_FILE`,
-`CLEARALL`) — i.e. the vendor uploads `ptzClear.xml` as a config/factory *file*
-(a dealer-login-gated upload), and applying that file runs the commands.
+#### File upload + EXECUTE_USER_CMD — transport CONFIRMED, execution gated
+Captured from AjDevTools "Upload config" and reproduced against a live
+MTF45-4G_AF. The file-upload transport is:
 
-`AnjoyCommClient.exec_cmd(*cmds, confirm=True)` builds this payload and sends it
-inside a `SYSTEM_CONFIG_SET_MESSAGE`/`CMD_CONFIG_UPDATE` frame. Live behaviour on
-MTF45-4G_AF: the device **accepts and ACKs** that frame (empty-body reply), but an
-inline `killall comm_server` did **not** restart the process (same session id on
-reconnect), so **execution over the inline carrier is not confirmed** — the real
-delivery is almost certainly the config/factory **file-upload** path. `exec_cmd`
-is therefore guarded (`confirm=True`) and marked experimental. Determining the
-upload path needs a live capture of the vendor tool driving that dealer function.
-Do not brute-force config/firmware message codes against hardware to find an
-executing carrier — that region also contains `CLEARALL` and `rm /mnt/nand/*`.
+1. **Announce** — `SYSTEM_CONTROL_MESSAGE`/`1022`, body
+   `<REQUEST_PARAM FileType="0" FilePath="…" FileLength="N" />`. The device replies
+   `SYSTEM_CONTROL_MESSAGE`/`1022` with `<RESPONSE_PARAM Port="8091" Type="1" />`.
+2. **Data** — one or more `MEDIA_DATA_MESSAGE`/`1` frames, body
+   `<POS StartPos="P" DataLen="L" />`, then a **4-byte `00 00 00 00` separator**,
+   then `L` raw file bytes.
+3. **EOF** — a `MEDIA_DATA_MESSAGE`/`1` with `DataLen="0"`; the device answers
+   `SYSTEM_CONTROL_MESSAGE`/`1001` (success — AjDevTools shows "File upload success").
+
+`AnjoyCommClient.upload_file(content, remote_path, file_type=…, confirm=True)`
+implements this and is **verified end-to-end** (the live device returns the 1001
+success ack).
+
+`EXECUTE_USER_CMD` (remote shell) rides on top: `exec_cmd(*cmds, confirm=True)`
+builds `<EXECUTE_USER_CMD><CMD DATA="…"/>…</EXECUTE_USER_CMD>` (escaped,
+GB2312-validated) and uploads it. **Execution caveat:** the device parses it via
+`get_user_cmd_from_xml` (in `mainctrl`), but only in the **OEM-default-config**
+path (`SET_OEM_DEFAULT_CONFIG`). With `file_type=0` (ordinary config) the file is
+**stored, not executed** — a live `killall comm_server` uploaded this way did not
+restart the process. The `file_type`/target filename that makes the device *run*
+the commands (what the vendor's `ptzClear.xml` uses) was **not** pinned down, and
+must **not** be brute-forced on hardware — that code path neighbours `CLEARALL`
+and `rm /mnt/nand/*`. So `exec_cmd` is guarded (`confirm=True`) and its execution
+trigger is the one remaining unknown.
 
 > `comm_server` is **single-session**: reconnect too fast after a drop and it may
 > not answer until the prior session ages out. Space reconnects; don't brute-force

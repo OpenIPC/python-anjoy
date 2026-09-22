@@ -104,6 +104,8 @@ class FakeCommServer:
         import socket
         self.sessionid = sessionid
         self.received = []           # list of (msg_type, body_xml_bytes)
+        self.upload_data = b""
+        self.upload_expected = 0
         self.srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.srv.bind(("127.0.0.1", 0))
@@ -175,9 +177,27 @@ class FakeCommServer:
                     conn.sendall(self._frame(resp))          # null-terminated
                 elif mt == "PTZ_CONTROL_MESSAGE":
                     conn.sendall(self._frame(body))          # echo the frame back
-                elif mt == "SYSTEM_CONFIG_SET_MESSAGE":
-                    ack = ('<?xml version="1.0" encoding="GB2312" ?>\n<XML_TOPSEE>\n'
-                           '<MESSAGE_HEADER\nMsg_type="SYSTEM_CONFIG_SET_MESSAGE"\n'
-                           'Msg_code="CMD_CONFIG_UPDATE"\nMsg_flag="0"\n/>\n'
-                           '<MESSAGE_BODY>\n</MESSAGE_BODY>\n</XML_TOPSEE>').encode("gb2312")
-                    conn.sendall(self._frame(ack))
+                elif mt == "SYSTEM_CONTROL_MESSAGE" and b'"1022"' in body:
+                    # file-upload announce -> reply "ready" RESPONSE_PARAM
+                    m2 = re.search(rb'FileLength="(\d+)"', body)
+                    self.upload_expected = int(m2.group(1)) if m2 else 0
+                    self.upload_data = b""
+                    resp = ('<?xml version="1.0" encoding="GB2312" ?>\n<XML_TOPSEE>\n'
+                            '<MESSAGE_HEADER\nMsg_type="SYSTEM_CONTROL_MESSAGE"\n'
+                            'Msg_code="1022"\nMsg_flag="0"\n/>\n<MESSAGE_BODY>\n'
+                            '<RESPONSE_PARAM Port="8091" Type="1" />\n'
+                            '</MESSAGE_BODY>\n</XML_TOPSEE>').encode("gb2312")
+                    conn.sendall(self._frame(resp))
+                elif mt == "MEDIA_DATA_MESSAGE":
+                    # data chunk: <POS StartPos DataLen/> + \x00\x00\x00\x00 + data
+                    m2 = re.search(rb'DataLen="(\d+)"', body)
+                    dlen = int(m2.group(1)) if m2 else 0
+                    if dlen:
+                        self.upload_data += body[-dlen:]      # trailing DataLen bytes
+                    else:
+                        # EOF -> success ack
+                        ack = ('<?xml version="1.0" encoding="GB2312" ?>\n<XML_TOPSEE>\n'
+                               '<MESSAGE_HEADER\nMsg_type="SYSTEM_CONTROL_MESSAGE"\n'
+                               'Msg_code="1001"\nMsg_flag="0"\n/>\n'
+                               '<MESSAGE_BODY></MESSAGE_BODY>\n</XML_TOPSEE>').encode("gb2312")
+                        conn.sendall(self._frame(ack))
