@@ -81,17 +81,27 @@ MTF45-4G_AF. The file-upload transport is:
 implements this and is **verified end-to-end** (the live device returns the 1001
 success ack).
 
-`EXECUTE_USER_CMD` (remote shell) rides on top: `exec_cmd(*cmds, confirm=True)`
-builds `<EXECUTE_USER_CMD><CMD DATA="…"/>…</EXECUTE_USER_CMD>` (escaped,
-GB2312-validated) and uploads it. **Execution caveat:** the device parses it via
-`get_user_cmd_from_xml` (in `mainctrl`), but only in the **OEM-default-config**
-path (`SET_OEM_DEFAULT_CONFIG`). With `file_type=0` (ordinary config) the file is
-**stored, not executed** — a live `killall comm_server` uploaded this way did not
-restart the process. The `file_type`/target filename that makes the device *run*
-the commands (what the vendor's `ptzClear.xml` uses) was **not** pinned down, and
-must **not** be brute-forced on hardware — that code path neighbours `CLEARALL`
-and `rm /mnt/nand/*`. So `exec_cmd` is guarded (`confirm=True`) and its execution
-trigger is the one remaining unknown.
+`EXECUTE_USER_CMD` (remote shell) — **CONFIRMED executing on hardware.**
+`exec_cmd(*cmds, confirm=True)` builds `<EXECUTE_USER_CMD><CMD DATA="…"/>…>`
+(escaped, GB2312-validated) and uploads it. Execution is gated on the **upload
+basename**, not a magic file-type: `comm_server` saves the upload to
+`/tmp/upfile_*.dat`, then routes by the `FilePath` basename. Recognised
+**OEM-default config names** — `defaultconfig.xml`, `config.default.xml`,
+`default_2_priority.xml` — are copied into `/mnt/nand/cust/` and processed by
+`mainctrl`'s `get_user_cmd_from_xml`, which **runs each command**. An arbitrary
+basename is only *stored*.
+
+Verified live on MTF45-4G_AF: uploading `<CMD DATA="killall comm_server"/>` under
+`defaultconfig.xml` dropped the control connection mid-upload (the daemon was
+actually killed, then respawned by `procman`); the camera stayed healthy (ONVIF
+config intact). `exec_cmd` defaults `remote_name="defaultconfig.xml"`.
+
+Side effects: the uploaded file **persists** as the OEM-default in
+`/mnt/nand/cust/` and its commands re-run on factory reset (this is exactly the
+vendor `ptzClear.xml` behaviour — clear preset memory + restart `comm_server`).
+Make commands self-cleaning (end with `rm -f /mnt/nand/cust/<remote_name>`) to
+avoid persistence; a command that stops `comm_server` drops the connection as it
+runs (expected — reconnect after `procman` respawns it).
 
 > `comm_server` is **single-session**: reconnect too fast after a drop and it may
 > not answer until the prior session ages out. Space reconnects; don't brute-force

@@ -20,8 +20,7 @@ python-anjoy focuses on the **vendor-specific glue** ONVIF cannot give you:
 - **The binary AJ protocol** on `comm_server` (TCP 8091) — `XML_TOPSEE` framing,
   plaintext auth, PTZ, and camera-pushed alarms. **Implemented** in `anjoy/comm.py`
   (`AnjoyCommClient`), decoded from a live capture and validated end-to-end against
-  an MTF45-4G_AF — see `docs/devices.md`. (`EXECUTE_USER_CMD` uses the same framing;
-  wiring it in is a follow-up.)
+  an MTF45-4G_AF — see `docs/devices.md`. Includes file upload and `EXECUTE_USER_CMD` remote shell (execution confirmed on hardware).
 - **RTSP URL helper** for Anjoy's confirmed query-param + MD5-password scheme
   (`anjoy.rtsp.anjoy_rtsp_url`).
 
