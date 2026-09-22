@@ -30,13 +30,21 @@ import socket
 import re
 import struct
 import xml.etree.ElementTree as ET
+from xml.sax.saxutils import escape as _xml_escape
 from typing import Iterator
 
 from . import const
 from .exceptions import AnjoyError, LoginError
 
 MAGIC = b"\x58\x91\x58\x51"
+# Sanity cap so a bogus/hostile length field cannot force a huge alloc.
+MAX_FRAME = 16 * 1024 * 1024
 _XML_DECL = '<?xml version="1.0" encoding="GB2312" ?>'
+
+
+def _attr(value) -> str:
+    """Escape a value for use as an XML attribute (& < > \")."""
+    return _xml_escape(str(value), {'"': '&quot;'})
 
 
 def build_envelope(msg_type: str, msg_code: str, body: str = "",
@@ -44,8 +52,9 @@ def build_envelope(msg_type: str, msg_code: str, body: str = "",
     # Structure mirrors the vendor's captured frames: a leading newline, the
     # header on one line, and (when present) the body wrapped in newlines. The
     # device is sensitive to this shape — a bare XML declaration is ignored.
-    header = (f'<MESSAGE_HEADER Msg_type="{msg_type}" Msg_code="{msg_code}" '
-              f'Msg_channel="{channel}" Msg_flag="0" Sessionid="{sessionid}"  />')
+    header = (f'<MESSAGE_HEADER Msg_type="{_attr(msg_type)}" '
+              f'Msg_code="{_attr(msg_code)}" Msg_channel="{_attr(channel)}" '
+              f'Msg_flag="0" Sessionid="{_attr(sessionid)}"  />')
     body_el = f"<MESSAGE_BODY>\n{body}\n</MESSAGE_BODY>" if body else "<MESSAGE_BODY/>"
     doc = f"\n{_XML_DECL}\n<XML_TOPSEE>\n{header}\n{body_el}\n</XML_TOPSEE>\n"
     return doc.encode("gb2312", "replace")
@@ -73,6 +82,7 @@ class AnjoyCommClient:
 
     # -- connection ---------------------------------------------------------
     def connect(self) -> None:
+        self.close()          # drop any prior connection + session state first
         self.sock = socket.create_connection((self.host, self.port), self.timeout)
 
     def close(self) -> None:
@@ -81,11 +91,18 @@ class AnjoyCommClient:
                 self.sock.close()
             finally:
                 self.sock = None
+        self.sessionid = ""
+        self.group = None
+        self._buf = b""
 
     def __enter__(self):
         if self.sock is None:
             self.connect()
-        self.login()
+        try:
+            self.login()
+        except Exception:
+            self.close()
+            raise
         return self
 
     def __exit__(self, *exc):
@@ -104,6 +121,8 @@ class AnjoyCommClient:
         if header[:4] != MAGIC:
             raise AnjoyError(f"bad AJ magic {header[:4].hex()} (expected 58915851)")
         length = struct.unpack("<I", header[4:8])[0]
+        if length > MAX_FRAME:
+            raise AnjoyError(f"AJ frame length {length} exceeds cap {MAX_FRAME}")
         xml = self._recv_exact(length)
         # The device NULL-terminates its frames (the length counts the trailing
         # \x00); strip it or ElementTree rejects "junk after document element".
@@ -133,17 +152,21 @@ class AnjoyCommClient:
     # -- auth ---------------------------------------------------------------
     def login(self) -> str:
         """Send the plaintext USER_AUTH and capture the session id."""
-        body = (f'<USER_AUTH_PARAM Username="{self.user}" '
-                f'Password="{self.password}" AuthMethod="1" />')
-        self._send("USER_AUTH_MESSAGE", "CMD_USER_AUTH", body)
-        while True:
-            mt, xml = self.recv_frame()
-            if mt == "USER_AUTH_MESSAGE":
-                break
-        root = ET.fromstring(xml.decode("gb2312", "replace"))
-        resp = root.find(".//USER_AUTH_RESPONSE")
-        if resp is None or not resp.get("Sessionid"):
-            raise LoginError("comm_server auth rejected (no session id)")
+        body = (f'<USER_AUTH_PARAM Username="{_attr(self.user)}" '
+                f'Password="{_attr(self.password)}" AuthMethod="1" />')
+        try:
+            self._send("USER_AUTH_MESSAGE", "CMD_USER_AUTH", body)
+            while True:
+                mt, xml = self.recv_frame()
+                if mt == "USER_AUTH_MESSAGE":
+                    break
+            root = ET.fromstring(xml.decode("gb2312", "replace"))
+            resp = root.find(".//USER_AUTH_RESPONSE")
+            if resp is None or not resp.get("Sessionid"):
+                raise LoginError("comm_server auth rejected (no session id)")
+        except Exception:
+            self.close()          # don't leak the socket / camera session on failure
+            raise
         self.sessionid = resp.get("Sessionid", "")
         self.group = resp.get("Group")
         return self.sessionid
@@ -153,11 +176,12 @@ class AnjoyCommClient:
         """Send one PTZ verb. Motion verbs are press-and-hold — follow with
         :meth:`ptz_stop`. Lens verbs: ``zoomtele``/``zoomwide``. Feature verbs:
         ``PtzRestore``/``PtzReboot`` (and preset calls via the web ``<cmd>``)."""
+        vcmd = _xml_escape(str(cmd))
         if cmd in const.PTZ_DIRECTIONS or cmd in ("zoomtele", "zoomwide", "stop"):
-            body = (f"<xml><cmd>{cmd}</cmd><panspeed>{panspeed}</panspeed>"
-                    f"<tiltspeed>{tiltspeed}</tiltspeed></xml>")
+            body = (f"<xml><cmd>{vcmd}</cmd><panspeed>{int(panspeed)}</panspeed>"
+                    f"<tiltspeed>{int(tiltspeed)}</tiltspeed></xml>")
         else:
-            body = f"<xml><cmd>{cmd}</cmd></xml>"
+            body = f"<xml><cmd>{vcmd}</cmd></xml>"
         self._send("PTZ_CONTROL_MESSAGE", "PTZ_CMD", body)
 
     def ptz_stop(self) -> None:
@@ -172,7 +196,21 @@ class AnjoyCommClient:
         """Send an arbitrary AJ message with the current session id."""
         self._send(msg_type, msg_code, body, channel)
 
-    def events(self) -> Iterator[tuple[str, bytes]]:
-        """Yield frames the camera pushes (e.g. ALARM_REPORT_MESSAGE) indefinitely."""
+    def events(self, heartbeat_on_idle: bool = True) -> Iterator[tuple[str, bytes]]:
+        """Yield frames the camera pushes (e.g. ALARM_REPORT_MESSAGE) indefinitely.
+
+        Alarms are sparse, so a read timeout is *not* the end of the stream: it is
+        swallowed (optionally sending a heartbeat to keep the session alive) and
+        the loop continues. A closed connection or a real protocol error still
+        propagates.
+        """
         while True:
-            yield self.recv_frame()
+            try:
+                yield self.recv_frame()
+            except socket.timeout:
+                if heartbeat_on_idle:
+                    try:
+                        self.heartbeat()
+                    except OSError:
+                        raise
+                continue

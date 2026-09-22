@@ -39,3 +39,25 @@ class TestRTSP(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRtspCli(unittest.TestCase):
+    def _capture_url(self, argv):
+        from anjoy import cli, rtsp as rtsp_mod
+        captured = {}
+        orig = rtsp_mod.record_rtsp
+        rtsp_mod.record_rtsp = lambda url, out, dur: captured.setdefault("url", url)
+        try:
+            cli.main(argv)
+        finally:
+            rtsp_mod.record_rtsp = orig
+        return captured.get("url", "")
+
+    def test_default_uses_anjoy_stream_url(self):
+        url = self._capture_url(["10.0.0.5", "rtsp", "out.mp4", "--stream", "0"])
+        self.assertEqual(
+            url, "rtsp://10.0.0.5:554/stream0?username=admin&password=E10ADC3949BA59ABBE56E057F20F883E")
+
+    def test_legacy_template_still_available(self):
+        url = self._capture_url(["10.0.0.5", "rtsp", "out.mp4", "--legacy-template", "/live/{channel}_{subtype}"])
+        self.assertEqual(url, "rtsp://admin:123456@10.0.0.5:554/live/0_0")
