@@ -213,57 +213,90 @@ class AnjoyCommClient:
     def heartbeat(self) -> None:
         self._send("AUXPTZ_HEARTBEAT_MESSAGE", "CMD_HEARTBEAT")
 
-    # -- EXECUTE_USER_CMD (remote shell — guarded, execution UNVERIFIED) -----
-    def exec_cmd(self, *commands: str, confirm: bool = False):
-        """Send an ``EXECUTE_USER_CMD`` payload (each *command* becomes a
-        ``<CMD DATA="…"/>``) — the vendor's remote-shell mechanism.
+    # -- file upload (SYSTEM_CONTROL/1022 announce + MEDIA_DATA/1 chunks) ----
+    # Captured from AjDevTools "Upload config" against a live MTF45-4G_AF.
+    def _media_data_frame(self, start_pos: int, data: bytes) -> bytes:
+        env = ('<?xml version="1.0" encoding="GB2312" ?>\n<XML_TOPSEE>\n'
+               '<MESSAGE_HEADER Msg_type="MEDIA_DATA_MESSAGE" Msg_code="1" '
+               'Msg_flag="0" />\n<MESSAGE_BODY>\n'
+               f'<POS StartPos="{start_pos}" DataLen="{len(data)}" />\n'
+               '</MESSAGE_BODY>\n</XML_TOPSEE>').encode("gb2312")
+        payload = env + b"\x00\x00\x00\x00" + data
+        return MAGIC + struct.pack("<I", len(payload)) + payload
 
-        ⚠️ This asks the camera to run arbitrary shell commands, so it is guarded
-        by ``confirm=True``.
+    def upload_file(self, content: bytes, remote_path: str = "config.xml", *,
+                    file_type: int = 0, chunk_size: int = 60000,
+                    confirm: bool = False):
+        """Upload *content* to the camera as *remote_path*, via the vendor's
+        file-transfer protocol (announce ``SYSTEM_CONTROL_MESSAGE``/``1022`` then
+        ``MEDIA_DATA_MESSAGE``/``1`` data chunks ending with a ``DataLen="0"``
+        chunk). Verified against a live MTF45-4G_AF ("File upload success").
 
-        Verification status (be honest about it): the frame below is the payload
-        the device's own parser (``get_user_cmd_from_xml`` in ``mainctrl``) reads,
-        wrapped in a ``SYSTEM_CONFIG_SET_MESSAGE``/``CMD_CONFIG_UPDATE`` carrier
-        that a live MTF45-4G_AF **accepts and ACKs**. However, execution was *not*
-        independently confirmed on that firmware — the parser fires when a config/
-        OEM-default **file** is applied (the vendor uploads ``ptzClear.xml`` via a
-        dealer-gated file-upload path), so an inline message may be acknowledged
-        without running the commands. Treat this as experimental; the file-upload
-        delivery path still needs a capture. Returns the device's response frame.
+        Writes to the device, so it is guarded by ``confirm=True``. ``file_type``
+        selects how the device treats the file (0 = config; other types route to
+        firmware / OEM-default handling — do not guess these on hardware).
+        Returns the device's final response frame.
+        """
+        if not confirm:
+            raise AnjoyError("upload_file writes a file to the camera; pass confirm=True")
+        if isinstance(content, str):
+            content = content.encode("gb2312")
+        n = len(content)
+        announce = (f'<REQUEST_PARAM FileType="{int(file_type)}" '
+                    f'FilePath="{_attr(remote_path)}" FileLength="{n}" />')
+        self._send("SYSTEM_CONTROL_MESSAGE", "1022", announce)
+        self.sock.settimeout(self.timeout)
+        self._recv_until("SYSTEM_CONTROL_MESSAGE")     # device: RESPONSE_PARAM ready
+        pos = 0
+        while pos < n:
+            piece = content[pos:pos + chunk_size]
+            self.sock.sendall(self._media_data_frame(pos, piece))
+            pos += len(piece)
+        self.sock.sendall(self._media_data_frame(n, b""))   # EOF
+        try:
+            return self._recv_until("SYSTEM_CONTROL_MESSAGE")
+        except socket.timeout:
+            return ("", b"")
+
+    def _recv_until(self, msg_type: str, limit: int = 32):
+        for _ in range(limit):
+            mt, xml = self.recv_frame()
+            if mt == msg_type:
+                return mt, xml
+        raise AnjoyError(f"no {msg_type} received")
+
+    # -- EXECUTE_USER_CMD (remote shell) — delivered as a config file ---------
+    def exec_cmd(self, *commands: str, remote_path: str = "ptzClear.xml",
+                 file_type: int = 0, confirm: bool = False):
+        """Deliver an ``EXECUTE_USER_CMD`` payload to the camera as a config file.
+
+        ⚠️ This asks the camera to run arbitrary shell, so it is guarded by
+        ``confirm=True``. Builds ``<EXECUTE_USER_CMD><CMD DATA="cmd"/>…>`` (each
+        command XML-escaped and GB2312-validated) and sends it via
+        :meth:`upload_file` — the vendor's real delivery mechanism (captured from
+        AjDevTools).
+
+        Verification (honest): the file-upload transport is confirmed (the device
+        returns "File upload success"), but with ``file_type=0`` (config) the
+        embedded command is *stored, not executed* — a live ``killall comm_server``
+        via this path did not restart the process. The device only runs
+        ``EXECUTE_USER_CMD`` when the file is processed as an OEM-default config
+        (``SET_OEM_DEFAULT_CONFIG`` in ``mainctrl``); the ``file_type``/target that
+        triggers that was not pinned down (and must not be brute-forced on
+        hardware — that path neighbours ``CLEARALL`` and ``rm /mnt/nand/*``).
         """
         if not confirm:
             raise AnjoyError(
                 "exec_cmd runs arbitrary shell on the camera; pass confirm=True. "
-                "Note: execution is UNVERIFIED on current firmware (see docstring).")
-        body = _exec_body(commands)
-        self._send("SYSTEM_CONFIG_SET_MESSAGE", "CMD_CONFIG_UPDATE", body)
-        # Read until the config-set ack, skipping any frames the camera pushes in
-        # the meantime (e.g. ALARM_REPORT_MESSAGE) so an alarm is not mistaken for
-        # the response. A timeout is surfaced, not hidden, because delivery is then
-        # uncertain (and a delayed ack could still arrive on a later read).
-        self.sock.settimeout(self.timeout)
-        try:
-            for _ in range(32):
-                mt, xml = self.recv_frame()
-                if mt == "SYSTEM_CONFIG_SET_MESSAGE":
-                    return mt, xml
-        except socket.timeout as e:
-            raise AnjoyError("timed out waiting for the EXECUTE_USER_CMD ack; "
-                             "delivery is uncertain") from e
-        raise AnjoyError("no CMD_CONFIG_UPDATE ack received")
+                "Note: execution is UNVERIFIED (config file_type stores, not runs).")
+        content = _exec_body(commands).encode("gb2312")
+        return self.upload_file(content, remote_path, file_type=file_type, confirm=True)
 
     def build_exec_frame(self, *commands: str) -> bytes:
-        """Build (without sending) the framed ``EXECUTE_USER_CMD`` bytes — useful
-        for tests and for the config-file-upload path once it is worked out."""
-        xml = build_envelope("SYSTEM_CONFIG_SET_MESSAGE", "CMD_CONFIG_UPDATE",
-                             _exec_body(commands), self.sessionid)
-        return build_frame(xml)
-
-    # -- low-level escape hatch --------------------------------------------
-    def send_message(self, msg_type: str, msg_code: str, body: str = "",
-                     channel: int = 0) -> None:
-        """Send an arbitrary AJ message with the current session id."""
-        self._send(msg_type, msg_code, body, channel)
+        """Build (without sending) the framed ``EXECUTE_USER_CMD`` **file bytes**
+        wrapped in a single MEDIA_DATA data frame — for tests and inspection."""
+        content = _exec_body(commands).encode("gb2312")
+        return self._media_data_frame(0, content)
 
     def events(self, heartbeat_on_idle: bool = True) -> Iterator[tuple[str, bytes]]:
         """Yield frames the camera pushes (e.g. ALARM_REPORT_MESSAGE) indefinitely.

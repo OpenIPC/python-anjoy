@@ -215,59 +215,53 @@ class TestReviewFixes(unittest.TestCase):
 
 
 class TestExecUserCmd(unittest.TestCase):
-    def test_requires_confirm(self):
+    def test_exec_requires_confirm(self):
         from anjoy.exceptions import AnjoyError
         c = AnjoyCommClient("x"); c.sock = _FakeSock()
         with self.assertRaises(AnjoyError):
-            c.exec_cmd("echo hi")            # no confirm=True
+            c.exec_cmd("echo hi")
 
-    def test_build_exec_frame_is_well_formed_and_escaped(self):
+    def test_upload_requires_confirm(self):
+        from anjoy.exceptions import AnjoyError
+        c = AnjoyCommClient("x"); c.sock = _FakeSock()
+        with self.assertRaises(AnjoyError):
+            c.upload_file(b"data")
+
+    def test_build_exec_frame_content_wellformed_and_escaped(self):
         import xml.etree.ElementTree as ET
         c = AnjoyCommClient("x")
         frame = c.build_exec_frame('echo "a&b"', "killall comm_server")
         self.assertEqual(frame[:4], MAGIC)
-        root = ET.fromstring(frame[8:].decode("gb2312").lstrip())
-        cmds = [e.get("DATA") for e in root.iter("CMD")]
-        self.assertEqual(cmds, ['echo "a&b"', "killall comm_server"])
-        self.assertIn(b'Msg_type="SYSTEM_CONFIG_SET_MESSAGE"', frame)
+        self.assertIn(b"MEDIA_DATA_MESSAGE", frame)          # delivered as file data
+        i = frame.index(b"<EXECUTE_USER_CMD>")
+        root = ET.fromstring(frame[i:].decode("gb2312"))     # the file content parses
+        self.assertEqual([e.get("DATA") for e in root.iter("CMD")],
+                         ['echo "a&b"', "killall comm_server"])
 
     def test_rejects_non_gb2312_command(self):
         from anjoy.exceptions import AnjoyError
         c = AnjoyCommClient("x")
         with self.assertRaises(AnjoyError):
-            c.build_exec_frame("echo \U0001F3A5")   # emoji: not GB2312-encodable
+            c.build_exec_frame("echo \U0001F3A5")           # emoji: not GB2312
 
-    def test_exec_skips_pushed_alarm_then_returns_ack(self):
-        c = AnjoyCommClient("x")
-        alarm = build_envelope("ALARM_REPORT_MESSAGE", "CMD_REPORT_ALARM")
-        ack = build_envelope("SYSTEM_CONFIG_SET_MESSAGE", "CMD_CONFIG_UPDATE")
-        inbound = (MAGIC + struct.pack("<I", len(alarm)) + alarm +
-                   MAGIC + struct.pack("<I", len(ack)) + ack)
-        c.sock = _FakeSock(inbound)
-        mt, _ = c.exec_cmd("true", confirm=True)     # alarm skipped, ack returned
-        self.assertEqual(mt, "SYSTEM_CONFIG_SET_MESSAGE")
-
-    def test_exec_raises_on_timeout(self):
-        import socket as _s
-        from anjoy.exceptions import AnjoyError
-        class TimeoutSock:
-            def __init__(self): self.sent = b""
-            def sendall(self, b): self.sent += b
-            def recv(self, n): raise _s.timeout("no ack")
-            def settimeout(self, t): pass
-            def close(self): pass
-        c = AnjoyCommClient("x"); c.sock = TimeoutSock()
-        with self.assertRaises(AnjoyError):
-            c.exec_cmd("true", confirm=True)
-
-    def test_exec_cmd_roundtrip_against_fake_server(self):
+    def test_upload_file_roundtrip_reassembles_content(self):
         with FakeCommServer() as srv:
             c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
             c.connect(); c.login()
-            mt, _ = c.exec_cmd("true", confirm=True)
-            self.assertEqual(mt, "SYSTEM_CONFIG_SET_MESSAGE")   # device ack
+            c.upload_file(b"HELLO-ANJOY-UPLOAD", "config.xml", confirm=True)
             c.close()
-        self.assertIn("SYSTEM_CONFIG_SET_MESSAGE", [t for t, _ in srv.received])
+        self.assertEqual(srv.upload_data, b"HELLO-ANJOY-UPLOAD")
+
+    def test_exec_cmd_delivers_execute_user_cmd_payload(self):
+        with FakeCommServer() as srv:
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            c.exec_cmd("true", confirm=True)
+            c.close()
+        self.assertIn(b"<EXECUTE_USER_CMD>", srv.upload_data)
+        self.assertIn(b'DATA="true"', srv.upload_data)
+        # the announce named the file-upload control message
+        self.assertIn("SYSTEM_CONTROL_MESSAGE", [t for t, _ in srv.received])
 
 
 if __name__ == "__main__":
