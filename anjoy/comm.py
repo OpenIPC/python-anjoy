@@ -11,6 +11,16 @@ repo ``docs/aj-protocol.md``), but the TCP framing (length prefix?) and the
 vendor tools driving a live unit before this can be implemented. Until then, use
 the SOAP client (:class:`anjoy.client.AnjoyClient`).
 
+Live probe (MTF45-4G_AF, port 8091): the port accepts a TCP connection, sends
+no banner, and RESETS the connection when fed guessed framing (raw XML envelope,
+LE/BE length-prefixed XML all RST). So the framing + USER_AUTH handshake must be
+captured from AjDevTools/CameraTestTool driving a unit before this can be
+implemented. Do NOT brute-force 8091 against hardware (reboot risk).
+
+For standard device/PTZ/stream control on current-generation Anjoy, use ONVIF
+(port 80) + RTSP (see docs/devices.md) — this module is only for the
+vendor-specific channel ONVIF does not cover (EXECUTE_USER_CMD, factory config).
+
 Envelope shape (from the SDK), for reference::
 
     <?xml version="1.0" encoding="GB2312" ?>

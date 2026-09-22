@@ -26,6 +26,16 @@ class TestRTSP(unittest.TestCase):
         url = rtsp.build_rtsp_url("h", "u", "p", template="live/0_0")
         self.assertIn("/live/0_0", url)
 
+    def test_anjoy_url_md5_password(self):
+        url = rtsp.anjoy_rtsp_url("10.0.0.5", "admin", "123456", stream=0)
+        # password is uppercase MD5 of "123456"
+        self.assertEqual(
+            url,
+            "rtsp://10.0.0.5:554/stream0?username=admin&password=E10ADC3949BA59ABBE56E057F20F883E")
+
+    def test_anjoy_url_substream(self):
+        self.assertIn("/stream1", rtsp.anjoy_rtsp_url("h", "u", "p", stream=1))
+
 
 if __name__ == "__main__":
     unittest.main()
