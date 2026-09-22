@@ -278,32 +278,36 @@ class AnjoyCommClient:
         want = msg_type + (f"/{msg_code}" if msg_code else "")
         raise AnjoyError(f"no {want} received")
 
-    # -- EXECUTE_USER_CMD (remote shell) — delivered as a config file ---------
-    def exec_cmd(self, *commands: str, remote_path: str = "ptzClear.xml",
-                 file_type: int = 0, confirm: bool = False):
-        """Deliver an ``EXECUTE_USER_CMD`` payload to the camera as a config file.
+    # -- EXECUTE_USER_CMD (remote shell) — CONFIRMED executing on hardware -----
+    def exec_cmd(self, *commands: str, remote_name: str = "defaultconfig.xml",
+                 confirm: bool = False):
+        """Run shell *commands* on the camera via ``EXECUTE_USER_CMD``.
 
-        ⚠️ This asks the camera to run arbitrary shell, so it is guarded by
-        ``confirm=True``. Builds ``<EXECUTE_USER_CMD><CMD DATA="cmd"/>…>`` (each
-        command XML-escaped and GB2312-validated) and sends it via
-        :meth:`upload_file` — the vendor's real delivery mechanism (captured from
-        AjDevTools).
+        ⚠️ Runs arbitrary shell, so guarded by ``confirm=True``.
 
-        Verification (honest): the file-upload transport is confirmed (the device
-        returns "File upload success"), but with ``file_type=0`` (config) the
-        embedded command is *stored, not executed* — a live ``killall comm_server``
-        via this path did not restart the process. The device only runs
-        ``EXECUTE_USER_CMD`` when the file is processed as an OEM-default config
-        (``SET_OEM_DEFAULT_CONFIG`` in ``mainctrl``); the ``file_type``/target that
-        triggers that was not pinned down (and must not be brute-forced on
-        hardware — that path neighbours ``CLEARALL`` and ``rm /mnt/nand/*``).
+        Mechanism (captured + confirmed on a live MTF45-4G_AF): the payload
+        ``<EXECUTE_USER_CMD><CMD DATA="cmd"/>…</EXECUTE_USER_CMD>`` (each command
+        XML-escaped and GB2312-validated) is delivered via :meth:`upload_file`
+        under an **OEM-default config basename** — ``comm_server`` copies it into
+        ``/mnt/nand/cust/`` and ``mainctrl``'s ``get_user_cmd_from_xml`` runs each
+        command. Verified live: a ``killall comm_server`` this way actually killed
+        the process. Recognised names: ``defaultconfig.xml``, ``config.default.xml``,
+        ``default_2_priority.xml`` (an arbitrary basename is only *stored*).
+
+        Side effects to know:
+        * The uploaded file **persists** as the OEM-default config in
+          ``/mnt/nand/cust/`` and its commands re-run on factory reset — this is
+          the vendor's own ``ptzClear.xml`` behaviour. Make commands self-cleaning
+          (e.g. end with ``rm -f /mnt/nand/cust/<remote_name>``) if you don't want
+          that.
+        * A command that stops ``comm_server`` (e.g. ``killall comm_server``) drops
+          this connection as it runs; :class:`AnjoyError` ("comm_server closed") is
+          then expected and the daemon is respawned by ``procman``.
         """
         if not confirm:
-            raise AnjoyError(
-                "exec_cmd runs arbitrary shell on the camera; pass confirm=True. "
-                "Note: execution is UNVERIFIED (config file_type stores, not runs).")
+            raise AnjoyError("exec_cmd runs arbitrary shell on the camera; pass confirm=True")
         content = _exec_body(commands).encode("gb2312")
-        return self.upload_file(content, remote_path, file_type=file_type, confirm=True)
+        return self.upload_file(content, remote_name, file_type=0, confirm=True)
 
     def build_exec_frame(self, *commands: str) -> bytes:
         """Build (without sending) the framed ``EXECUTE_USER_CMD`` **file bytes**
