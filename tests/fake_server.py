@@ -175,3 +175,9 @@ class FakeCommServer:
                     conn.sendall(self._frame(resp))          # null-terminated
                 elif mt == "PTZ_CONTROL_MESSAGE":
                     conn.sendall(self._frame(body))          # echo the frame back
+                elif mt == "SYSTEM_CONFIG_SET_MESSAGE":
+                    ack = ('<?xml version="1.0" encoding="GB2312" ?>\n<XML_TOPSEE>\n'
+                           '<MESSAGE_HEADER\nMsg_type="SYSTEM_CONFIG_SET_MESSAGE"\n'
+                           'Msg_code="CMD_CONFIG_UPDATE"\nMsg_flag="0"\n/>\n'
+                           '<MESSAGE_BODY>\n</MESSAGE_BODY>\n</XML_TOPSEE>').encode("gb2312")
+                    conn.sendall(self._frame(ack))
