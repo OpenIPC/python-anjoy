@@ -98,6 +98,15 @@ downloads `/mnt/nand/config.xml` — the full `<IPCConfig>` tree (PTZ, encode,
 users, network, OSD, alarms…). Verified: 26886-byte config downloaded from an
 MTF45-4G_AF. Read-only.
 
+#### Snapshot (`SYSTEM_CONTROL`/1043 + download)
+Captured from AjDevTools "Batch Snap Picture". Trigger
+`SYSTEM_CONTROL_MESSAGE`/`1043` with `<REQUEST_PARAM Stream="S" Quality="Q"/>`;
+the device saves a JPEG under `/tmp` and replies
+`<RESPONSE_PARAM>JpgFile="…"</RESPONSE_PARAM>`, then it is fetched with the file
+download above. `AnjoyCommClient.snapshot(stream, quality)` implements this and
+returns the JPEG bytes. Verified live: a 640×360 baseline JPEG from an
+MTF45-4G_AF. Read-only.
+
 `EXECUTE_USER_CMD` (remote shell) — **CONFIRMED executing on hardware.**
 `exec_cmd(*cmds, confirm=True)` builds `<EXECUTE_USER_CMD><CMD DATA="…"/>…>`
 (escaped, GB2312-validated) and uploads it. Execution is gated on the **upload

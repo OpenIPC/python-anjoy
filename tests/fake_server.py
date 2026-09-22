@@ -190,6 +190,14 @@ class FakeCommServer:
                             '<RESPONSE_PARAM Port="8091" Type="1" />\n'
                             '</MESSAGE_BODY>\n</XML_TOPSEE>').encode("gb2312")
                     conn.sendall(self._frame(resp))
+                elif mt == "SYSTEM_CONTROL_MESSAGE" and b'"1043"' in body:
+                    self.download_content = b"\xff\xd8\xffFAKEJPEG\xff\xd9"
+                    resp = ('<?xml version="1.0" encoding="GB2312" ?>\n<XML_TOPSEE>\n'
+                            '<MESSAGE_HEADER\nMsg_type="SYSTEM_CONTROL_MESSAGE"\n'
+                            'Msg_code="1043"\nMsg_flag="0"\n/>\n<MESSAGE_BODY>\n'
+                            '<RESPONSE_PARAM>\nJpgFile="snap_test.jpg"\n</RESPONSE_PARAM>\n'
+                            '</MESSAGE_BODY>\n</XML_TOPSEE>').encode("gb2312")
+                    conn.sendall(self._frame(resp))
                 elif mt == "SYSTEM_CONTROL_MESSAGE" and b'"1023"' in body:
                     # file-download announce -> RESPONSE_PARAM(FileLength) then data
                     data = self.download_content
