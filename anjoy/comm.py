@@ -318,6 +318,41 @@ class AnjoyCommClient:
         content = _exec_body(commands).encode("gb2312")
         return self.upload_file(content, remote_name, file_type=0, confirm=True)
 
+    # -- file download (SYSTEM_CONTROL/1023 + MEDIA_DATA/2 chunks) -----------
+    def download_file(self, remote_path: str) -> bytes:
+        """Download a file from the camera. Captured from AjDevTools "Batch
+        Download Config" and verified on a live MTF45-4G_AF.
+
+        Announce ``SYSTEM_CONTROL_MESSAGE``/``1023`` with
+        ``<REQUEST_PARAM FileName="…" StartPos="0"/>``; the device replies
+        ``<RESPONSE_PARAM Port="8091" Type="1" FileLength="N"/>`` then streams
+        ``MEDIA_DATA_MESSAGE``/``2`` chunks (``<POS … DataLen="L"/>`` + a 4-byte
+        separator + L bytes) ending with ``DataLen="0"``. Read-only.
+        """
+        ann = f'<REQUEST_PARAM FileName="{_attr(remote_path)}" StartPos="0" />'
+        self._send("SYSTEM_CONTROL_MESSAGE", "1023", ann)
+        self.sock.settimeout(self.timeout)
+        _, resp = self._recv_until("SYSTEM_CONTROL_MESSAGE", "1023")
+        m = re.search(rb'FileLength="(\d+)"', resp)
+        total = int(m.group(1)) if m else None
+        out = bytearray()
+        while total is None or len(out) < total:
+            mt, payload = self.recv_frame()
+            if mt != "MEDIA_DATA_MESSAGE":
+                continue
+            dm = re.search(rb'DataLen="(\d+)"', payload)
+            dlen = int(dm.group(1)) if dm else 0
+            if dlen == 0:
+                break
+            _, _, tail = payload.partition(b"</XML_TOPSEE>")
+            out += tail[-dlen:] if len(tail) >= dlen else tail
+        return bytes(out[:total]) if total is not None else bytes(out)
+
+    def get_config(self, remote_path: str = const.CONFIG_PATH) -> bytes:
+        """Download the device's full ``<IPCConfig>`` config XML (the config
+        backup). Convenience wrapper over :meth:`download_file`."""
+        return self.download_file(remote_path)
+
     def build_exec_frame(self, *commands: str) -> bytes:
         """Build (without sending) the framed ``EXECUTE_USER_CMD`` **file bytes**
         wrapped in a single MEDIA_DATA data frame — for tests and inspection."""

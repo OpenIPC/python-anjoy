@@ -293,5 +293,27 @@ class TestExecUserCmd(unittest.TestCase):
             c.exec_cmd("true", remote_name="whatever.xml", confirm=True)
 
 
+class TestDownload(unittest.TestCase):
+    def test_download_file_reassembles(self):
+        with FakeCommServer() as srv:
+            srv.download_content = b"<IPCConfig>hello-config-payload</IPCConfig>"
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            data = c.download_file("/mnt/nand/config.xml")
+            c.close()
+        self.assertEqual(data, b"<IPCConfig>hello-config-payload</IPCConfig>")
+
+    def test_get_config_uses_config_path(self):
+        from anjoy import const
+        with FakeCommServer() as srv:
+            srv.download_content = b"<IPCConfig/>"
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            self.assertEqual(c.get_config(), b"<IPCConfig/>")
+            c.close()
+        # the request named the on-device config path
+        self.assertTrue(any(const.CONFIG_PATH.encode() in b for _, b in srv.received))
+
+
 if __name__ == "__main__":
     unittest.main()

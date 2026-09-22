@@ -8,6 +8,7 @@ JSON error envelope. No device or network egress needed.
 
 from __future__ import annotations
 
+import struct
 import threading
 import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -106,6 +107,7 @@ class FakeCommServer:
         self.received = []           # list of (msg_type, body_xml_bytes)
         self.upload_data = b""
         self.upload_expected = 0
+        self.download_content = b'<?xml version="1.0" encoding="GB2312" ?><IPCConfig><SystemConfig/></IPCConfig>'
         self.srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.srv.bind(("127.0.0.1", 0))
@@ -188,6 +190,27 @@ class FakeCommServer:
                             '<RESPONSE_PARAM Port="8091" Type="1" />\n'
                             '</MESSAGE_BODY>\n</XML_TOPSEE>').encode("gb2312")
                     conn.sendall(self._frame(resp))
+                elif mt == "SYSTEM_CONTROL_MESSAGE" and b'"1023"' in body:
+                    # file-download announce -> RESPONSE_PARAM(FileLength) then data
+                    data = self.download_content
+                    resp = ('<?xml version="1.0" encoding="GB2312" ?>\n<XML_TOPSEE>\n'
+                            '<MESSAGE_HEADER\nMsg_type="SYSTEM_CONTROL_MESSAGE"\n'
+                            'Msg_code="1023"\nMsg_flag="0"\n/>\n<MESSAGE_BODY>\n'
+                            f'<RESPONSE_PARAM Port="8091" Type="1" FileLength="{len(data)}" />\n'
+                            '</MESSAGE_BODY>\n</XML_TOPSEE>').encode("gb2312")
+                    conn.sendall(self._frame(resp))
+                    env = ('<?xml version="1.0" encoding="GB2312" ?>\n<XML_TOPSEE>\n'
+                           '<MESSAGE_HEADER Msg_type="MEDIA_DATA_MESSAGE" Msg_code="2" '
+                           'Msg_flag="0" />\n<MESSAGE_BODY>\n'
+                           f'<POS FileStartPos="0" StartPos="0" DataLen="{len(data)}" />\n'
+                           '</MESSAGE_BODY>\n</XML_TOPSEE>').encode("gb2312")
+                    conn.sendall(self.MAGIC + struct.pack("<I", len(env)+4+len(data)) + env + b"\x00\x00\x00\x00" + data)
+                    eof = ('<?xml version="1.0" encoding="GB2312" ?>\n<XML_TOPSEE>\n'
+                           '<MESSAGE_HEADER Msg_type="MEDIA_DATA_MESSAGE" Msg_code="2" '
+                           'Msg_flag="0" />\n<MESSAGE_BODY>\n'
+                           f'<POS FileStartPos="0" StartPos="{len(data)}" DataLen="0" />\n'
+                           '</MESSAGE_BODY>\n</XML_TOPSEE>').encode("gb2312")
+                    conn.sendall(self._frame(eof, null_term=False))
                 elif mt == "MEDIA_DATA_MESSAGE":
                     # data chunk: <POS StartPos DataLen/> + \x00\x00\x00\x00 + data
                     m2 = re.search(rb'DataLen="(\d+)"', body)

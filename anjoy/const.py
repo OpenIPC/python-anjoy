@@ -140,6 +140,9 @@ AJ_ROOT_ANJVISION = "XML_ANJVISION"   # discovery / branding
 AJ_ROOT_TOPSEE = "XML_TOPSEE"         # OEM lineage, used inside the SDK
 AJ_ENCODING = "GB2312"
 
+# On-device path of the full config XML (AjDevTools "Batch Download Config").
+CONFIG_PATH = "/mnt/nand/config.xml"
+
 # -- error codes ------------------------------------------------------------
 ANJOY_ERRORS = {
     285475072: "PTZ protocol not set on this channel",
