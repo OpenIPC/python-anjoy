@@ -611,5 +611,49 @@ class TestDownload(unittest.TestCase):
         self.assertIn(b'Enable="1"', sect)
 
 
+    def test_get_users_parses_accounts(self):
+        cfg = (b'<IPCConfig><SystemConfig><UserConfig>'
+               b'<Account Username="admin" EncryptPwd="deadbeef" Group="Administrator" Status="Enable" />'
+               b'<Account Username="guest" EncryptPwd="cafe" Group="User" Status="Disable" />'
+               b'</UserConfig></SystemConfig></IPCConfig>')
+        with FakeCommServer() as srv:
+            srv.download_content = cfg
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            users = c.get_users()
+            c.close()
+        self.assertEqual([u["Username"] for u in users], ["admin", "guest"])
+        self.assertEqual(users[0]["Group"], "Administrator")
+        self.assertEqual(users[1]["Status"], "Disable")
+
+    def test_set_password_frame_plaintext(self):
+        from anjoy.comm import MAGIC
+        ack = build_envelope("SYSTEM_CONFIG_SET_MESSAGE", "223")
+        c = AnjoyCommClient("x"); c.sessionid = "S"
+        c.sock = _FakeSock(MAGIC + struct.pack("<I", len(ack)) + ack)
+        c.set_password("s3cret", confirm=True)
+        self.assertIn(b'Msg_code="223"', c.sock.sent)
+        self.assertIn(b'Username="admin"', c.sock.sent)
+        self.assertIn(b'Password="s3cret"', c.sock.sent)   # device hashes it, we send plaintext
+        self.assertIn(b'Group="Administrator"', c.sock.sent)
+
+    def test_set_password_requires_confirm(self):
+        from anjoy.exceptions import AnjoyError
+        c = AnjoyCommClient("x"); c.sock = _FakeSock()
+        with self.assertRaises(AnjoyError):
+            c.set_password("x")
+        self.assertEqual(c.sock.sent, b"")                 # nothing written
+
+    def test_set_password_escapes_special_chars(self):
+        import xml.etree.ElementTree as ET
+        from anjoy.comm import MAGIC
+        ack = build_envelope("SYSTEM_CONFIG_SET_MESSAGE", "223")
+        c = AnjoyCommClient("x"); c.sessionid = "S"
+        c.sock = _FakeSock(MAGIC + struct.pack("<I", len(ack)) + ack)
+        c.set_password('a"&<b', confirm=True)
+        # the sent frame must remain well-formed XML despite special chars
+        ET.fromstring(c.sock.sent[8:].decode("gb2312").lstrip())
+
+
 if __name__ == "__main__":
     unittest.main()

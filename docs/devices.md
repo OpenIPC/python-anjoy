@@ -164,6 +164,22 @@ The alarm/AI toggles share a `_rmw_section(tag, code, attrs)` helper that
 downloads the section, overwrites the named attributes, and writes it back —
 preserving every other attribute and child element.
 
+Users — code **223** = `SystemConfig/UserConfig`. Captured from AjDevTools "Batch
+Set Password": the tool sends the **plaintext** password and the device computes
+the stored `EncryptPwd` (there is no client-side hashing):
+
+```
+SYSTEM_CONFIG_SET_MESSAGE / 223
+<UserConfig><Account Username="admin" Password="<plaintext>" Group="Administrator" Status="Enable" /></UserConfig>
+```
+
+`set_password(password, username="admin", confirm=True)` implements this;
+`get_users()` reads the accounts (`Username`/`Group`/`Status`/`EncryptPwd`) from
+the config download. Verified live on MTF45-4G_AF: changed the admin password and
+re-authenticated with it, then reverted. This account is the login for **every**
+service (binary control, ONVIF, web), so a change affects them all. Write —
+`confirm=True`.
+
 Both verified live with a set-then-restore round-trip. Config attributes are read
 back from the full-config download, which formats each attribute on its own line —
 parse with a multiline-aware matcher.
