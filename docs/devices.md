@@ -173,12 +173,23 @@ SYSTEM_CONFIG_SET_MESSAGE / 223
 <UserConfig><Account Username="admin" Password="<plaintext>" Group="Administrator" Status="Enable" /></UserConfig>
 ```
 
-`set_password(password, username="admin", confirm=True)` implements this;
-`get_users()` reads the accounts (`Username`/`Group`/`Status`/`EncryptPwd`) from
-the config download. Verified live on MTF45-4G_AF: changed the admin password and
-re-authenticated with it, then reverted. This account is the login for **every**
-service (binary control, ONVIF, web), so a change affects them all. Write —
-`confirm=True`.
+`set_password(password, username="admin", confirm=True)` implements this
+(read-modify-write of the target account, so a reset preserves its Group/Status —
+no privilege change — and syncs the client's own credential); `get_users()` reads
+the accounts (`Username`/`Group`/`Status`/`EncryptPwd`) from the config download.
+Verified live on MTF45-4G_AF: changed the admin password and re-authenticated with
+it, then reverted. This account is the login for **every** service (binary
+control, ONVIF, web), so a change affects them all. Write — `confirm=True`.
+
+Network — code **325** = `NetworkConfig/LANConfig` (`<LANConfig MacAddress DHCP
+IPAddress Netmask Gateway DNS1 DNS2 hostname MTU/>`, self-closing).
+`set_network(ip=, netmask=, gateway=, dns1=, dns2=, dhcp=, hostname=, mtu=,
+confirm=True)` read-modify-writes it (only the given fields change; `MacAddress`
+etc. preserved). Verified live on MTF45-4G_AF: a reversible DNS2 change (IP
+preserved), and a **DHCP↔static switch** (static→`DHCP=1`→back to static
+`10.216.128.149`). ⚠️ Changing `ip`/`netmask`/`gateway` or enabling `dhcp` can
+move the camera — reconnect at, or `anjoy.discovery.discover()`, the new address.
+Write — `confirm=True`.
 
 Both verified live with a set-then-restore round-trip. Config attributes are read
 back from the full-config download, which formats each attribute on its own line —

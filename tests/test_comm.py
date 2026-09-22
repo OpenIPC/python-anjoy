@@ -701,5 +701,45 @@ class TestDownload(unittest.TestCase):
         ET.fromstring(sect.decode("gb2312"))               # still well-formed XML
 
 
+    _LAN_CFG = (b'<IPCConfig><NetworkConfig>'
+                b'<LANConfig MacAddress="AA:BB" DHCP="0" IPAddress="10.0.0.5" '
+                b'Netmask="255.255.255.0" Gateway="10.0.0.1" DNS1="1.1.1.1" '
+                b'DNS2="8.8.8.8" hostname="cam" MTU="1500" />'
+                b'</NetworkConfig></IPCConfig>')
+
+    def test_set_network_changes_and_preserves(self):
+        with FakeCommServer() as srv:
+            srv.download_content = self._LAN_CFG
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            c.set_network(ip="10.0.0.9", dhcp=True, dns2="9.9.9.9", confirm=True)
+            c.close()
+        code, sect = srv.config_sets[0]
+        self.assertEqual(code, "325")
+        self.assertIn(b'IPAddress="10.0.0.9"', sect)       # changed
+        self.assertIn(b'DHCP="1"', sect)                   # bool -> 1
+        self.assertIn(b'DNS2="9.9.9.9"', sect)
+        self.assertIn(b'MacAddress="AA:BB"', sect)         # preserved
+        self.assertIn(b'Gateway="10.0.0.1"', sect)         # untouched field preserved
+
+    def test_set_network_only_changes_given_fields(self):
+        with FakeCommServer() as srv:
+            srv.download_content = self._LAN_CFG
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            c.set_network(dns1="1.0.0.1", confirm=True)     # only DNS1
+            c.close()
+        _, sect = srv.config_sets[0]
+        self.assertIn(b'DNS1="1.0.0.1"', sect)
+        self.assertIn(b'IPAddress="10.0.0.5"', sect)        # unchanged
+        self.assertIn(b'DHCP="0"', sect)                    # unchanged
+
+    def test_set_network_requires_confirm(self):
+        from anjoy.exceptions import AnjoyError
+        c = AnjoyCommClient("x"); c.sock = _FakeSock()
+        with self.assertRaises(AnjoyError):
+            c.set_network(ip="10.0.0.9")
+
+
 if __name__ == "__main__":
     unittest.main()
