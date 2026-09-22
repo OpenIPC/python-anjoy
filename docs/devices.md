@@ -127,9 +127,22 @@ SYSTEM_CONFIG_SET_MESSAGE / 525
 title to "Test" then back to "Camera" via code 525 changed and restored
 `TitleUtf8` in the downloaded config (asynchronously). Write — `confirm=True`.
 
-Confirmed section codes so far: **`525` = `Overlay`** (OSD title/timestamp),
-**`228` = `SystemConfig/MaintainConfig`** (`<MaintainConfig Enable Day Time/>` —
-scheduled auto-reboot; the device stores `Time` space-padded, e.g. `" 2: 0: 0"`).
+Section codes were recovered two ways and cross-checked: **captured live** from
+AjDevTools batch dialogs, and **disassembled** from `libtools.so`, where each
+`MsgSet*Config` wrapper loads a hard-coded immediate into `r0` before
+`MsgSetModuleConfig(code, xml)` — so the wrapper's immediate is the wire code
+(`MsgSetVideoOSDConfig` loads 525, matching the live capture). Confirmed live so
+far: **`525` = `Overlay`** (OSD title/timestamp), **`228` =
+`SystemConfig/MaintainConfig`** (`<MaintainConfig Enable Day Time/>` — auto-reboot;
+`Time` stored space-padded, e.g. `" 2: 0: 0"`), **`227` = `SystemConfig/MiscConfig`**
+(device language), **`822` = `AlarmConfig/MotionDetectAlarm`** (full element, incl.
+`EnableTimeList`/`AlarmAction` children).
+
+Not every section takes a straight write: `TimeConfig` (code 222) did **not**
+acknowledge a full-element write (its `NTPConfig` child likely triggers a blocking
+NTP re-sync), and AjDevTools' "Batch Sync Time" clock-sync goes over a non-8091
+channel (ONVIF/HTTP) — both are left for a dedicated capture.
+
 Typed wrappers over the primitive:
 
 * `set_title(title, confirm=True)` — read-modify-write of `<Overlay>`: only the
@@ -139,6 +152,9 @@ Typed wrappers over the primitive:
   config carries it, and only that path is limited to the GB2312 charset.
 * `set_maintenance(enable, day=7, time="HH:MM:SS", confirm=True)` — code 228
   (`day=7` = every day, per the vendor UI).
+* `set_language(language, confirm=True)` — code 227 (`"zh_cn"`, `"en"`, …).
+* `set_motion(enable, sensitivity=None, alarm_threshold=None, confirm=True)` —
+  code 822, read-modify-write of `<MotionDetectAlarm>` (grid/schedule/actions kept).
 
 Both verified live with a set-then-restore round-trip. Config attributes are read
 back from the full-config download, which formats each attribute on its own line —

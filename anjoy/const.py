@@ -155,6 +155,8 @@ CONFIG_PATH = "/mnt/nand/config.xml"
 # the device's per-section GET is not what the vendor tool uses.
 CFG_OVERLAY = "525"      # MediaConfig/Video/Overlay — OSD title + timestamp
 CFG_MAINTAIN = "228"     # SystemConfig/MaintainConfig — scheduled auto-reboot
+CFG_MISC = "227"         # SystemConfig/MiscConfig — device language
+CFG_MOTION = "822"       # AlarmConfig/MotionDetectAlarm — motion detection
 
 # -- error codes ------------------------------------------------------------
 ANJOY_ERRORS = {
