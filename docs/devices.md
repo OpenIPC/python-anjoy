@@ -64,6 +64,26 @@ end-to-end against the device.
   detected"). Raw capture: `../MC-F45-4MP-PTZ18x/aj8091-capture.{tx,rx}.bin` in the
   research repo.
 
+#### EXECUTE_USER_CMD (remote shell) — partially wired, execution UNVERIFIED
+The vendor's remote-shell mechanism. The device's own parser
+(`get_user_cmd_from_xml` in `mainctrl`) reads
+`<EXECUTE_USER_CMD><CMD DATA="cmd"/>…</EXECUTE_USER_CMD>` and runs each `DATA`
+command. It lives in the **config-file / OEM-default-config** code path
+(next to `SET_OEM_DEFAULT_CONFIG`, `config.default.xml`, `FIRMWARE_CONTROL_FILE`,
+`CLEARALL`) — i.e. the vendor uploads `ptzClear.xml` as a config/factory *file*
+(a dealer-login-gated upload), and applying that file runs the commands.
+
+`AnjoyCommClient.exec_cmd(*cmds, confirm=True)` builds this payload and sends it
+inside a `SYSTEM_CONFIG_SET_MESSAGE`/`CMD_CONFIG_UPDATE` frame. Live behaviour on
+MTF45-4G_AF: the device **accepts and ACKs** that frame (empty-body reply), but an
+inline `killall comm_server` did **not** restart the process (same session id on
+reconnect), so **execution over the inline carrier is not confirmed** — the real
+delivery is almost certainly the config/factory **file-upload** path. `exec_cmd`
+is therefore guarded (`confirm=True`) and marked experimental. Determining the
+upload path needs a live capture of the vendor tool driving that dealer function.
+Do not brute-force config/firmware message codes against hardware to find an
+executing carrier — that region also contains `CLEARALL` and `rm /mnt/nand/*`.
+
 > `comm_server` is **single-session**: reconnect too fast after a drop and it may
 > not answer until the prior session ages out. Space reconnects; don't brute-force
 > it (these Sigmastar units can reboot under probing).

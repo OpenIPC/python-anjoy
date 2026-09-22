@@ -199,6 +199,46 @@ class AnjoyCommClient:
     def heartbeat(self) -> None:
         self._send("AUXPTZ_HEARTBEAT_MESSAGE", "CMD_HEARTBEAT")
 
+    # -- EXECUTE_USER_CMD (remote shell — guarded, execution UNVERIFIED) -----
+    def exec_cmd(self, *commands: str, confirm: bool = False):
+        """Send an ``EXECUTE_USER_CMD`` payload (each *command* becomes a
+        ``<CMD DATA="…"/>``) — the vendor's remote-shell mechanism.
+
+        ⚠️ This asks the camera to run arbitrary shell commands, so it is guarded
+        by ``confirm=True``.
+
+        Verification status (be honest about it): the frame below is the payload
+        the device's own parser (``get_user_cmd_from_xml`` in ``mainctrl``) reads,
+        wrapped in a ``SYSTEM_CONFIG_SET_MESSAGE``/``CMD_CONFIG_UPDATE`` carrier
+        that a live MTF45-4G_AF **accepts and ACKs**. However, execution was *not*
+        independently confirmed on that firmware — the parser fires when a config/
+        OEM-default **file** is applied (the vendor uploads ``ptzClear.xml`` via a
+        dealer-gated file-upload path), so an inline message may be acknowledged
+        without running the commands. Treat this as experimental; the file-upload
+        delivery path still needs a capture. Returns the device's response frame.
+        """
+        if not confirm:
+            raise AnjoyError(
+                "exec_cmd runs arbitrary shell on the camera; pass confirm=True. "
+                "Note: execution is UNVERIFIED on current firmware (see docstring).")
+        items = "".join(f'<CMD DATA="{_attr(c)}" />' for c in commands)
+        body = f"<EXECUTE_USER_CMD>{items}</EXECUTE_USER_CMD>"
+        self._send("SYSTEM_CONFIG_SET_MESSAGE", "CMD_CONFIG_UPDATE", body)
+        try:
+            self.sock.settimeout(self.timeout)
+            return self.recv_frame()
+        except socket.timeout:
+            return ("", b"")
+
+    def build_exec_frame(self, *commands: str) -> bytes:
+        """Build (without sending) the framed ``EXECUTE_USER_CMD`` bytes — useful
+        for tests and for the config-file-upload path once it is worked out."""
+        items = "".join(f'<CMD DATA="{_attr(c)}" />' for c in commands)
+        body = f"<EXECUTE_USER_CMD>{items}</EXECUTE_USER_CMD>"
+        xml = build_envelope("SYSTEM_CONFIG_SET_MESSAGE", "CMD_CONFIG_UPDATE",
+                             body, self.sessionid)
+        return build_frame(xml)
+
     # -- low-level escape hatch --------------------------------------------
     def send_message(self, msg_type: str, msg_code: str, body: str = "",
                      channel: int = 0) -> None:

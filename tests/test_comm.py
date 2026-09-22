@@ -212,5 +212,34 @@ class TestReviewFixes(unittest.TestCase):
         self.assertEqual(mt, "ALARM_REPORT_MESSAGE")
 
 
+class TestExecUserCmd(unittest.TestCase):
+    def test_requires_confirm(self):
+        from anjoy.exceptions import AnjoyError
+        c = AnjoyCommClient("x"); c.sock = _FakeSock()
+        with self.assertRaises(AnjoyError):
+            c.exec_cmd("echo hi")            # no confirm=True
+
+    def test_build_exec_frame_is_well_formed_and_escaped(self):
+        import xml.etree.ElementTree as ET
+        c = AnjoyCommClient("x")
+        frame = c.build_exec_frame('echo "a&b"', "killall comm_server")
+        self.assertEqual(frame[:4], MAGIC)
+        xml = frame[8:].decode("gb2312").lstrip()
+        root = ET.fromstring(xml)            # must parse (DATA escaped)
+        cmds = [e.get("DATA") for e in root.iter("CMD")]
+        self.assertEqual(cmds, ['echo "a&b"', "killall comm_server"])
+        self.assertIn(b'Msg_type="SYSTEM_CONFIG_SET_MESSAGE"', frame)
+
+    def test_exec_cmd_roundtrip_against_fake_server(self):
+        with FakeCommServer() as srv:
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            mt, _ = c.exec_cmd("true", confirm=True)
+            self.assertEqual(mt, "SYSTEM_CONFIG_SET_MESSAGE")   # device ack
+            c.close()
+        types = [t for t, _ in srv.received]
+        self.assertIn("SYSTEM_CONFIG_SET_MESSAGE", types)
+
+
 if __name__ == "__main__":
     unittest.main()
