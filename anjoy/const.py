@@ -154,6 +154,7 @@ CONFIG_PATH = "/mnt/nand/config.xml"
 # Reads go through the full-config download (:meth:`AnjoyCommClient.get_config`) —
 # the device's per-section GET is not what the vendor tool uses.
 CFG_OVERLAY = "525"      # MediaConfig/Video/Overlay — OSD title + timestamp
+CFG_MAINTAIN = "228"     # SystemConfig/MaintainConfig — scheduled auto-reboot
 
 # -- error codes ------------------------------------------------------------
 ANJOY_ERRORS = {

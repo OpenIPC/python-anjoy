@@ -127,6 +127,23 @@ SYSTEM_CONFIG_SET_MESSAGE / 525
 title to "Test" then back to "Camera" via code 525 changed and restored
 `TitleUtf8` in the downloaded config (asynchronously). Write — `confirm=True`.
 
+Confirmed section codes so far: **`525` = `Overlay`** (OSD title/timestamp),
+**`228` = `SystemConfig/MaintainConfig`** (`<MaintainConfig Enable Day Time/>` —
+scheduled auto-reboot; the device stores `Time` space-padded, e.g. `" 2: 0: 0"`).
+Typed wrappers over the primitive:
+
+* `set_title(title, confirm=True)` — read-modify-write of `<Overlay>`: only the
+  `<TitleOverlay>` title changes (position/font/timestamp/user-OSD preserved).
+  `TitleUtf8` (hex of the UTF-8 bytes) is always set, so any title works; the
+  legacy `Title` field (hex of the GB2312 bytes) is updated only when the device
+  config carries it, and only that path is limited to the GB2312 charset.
+* `set_maintenance(enable, day=7, time="HH:MM:SS", confirm=True)` — code 228
+  (`day=7` = every day, per the vendor UI).
+
+Both verified live with a set-then-restore round-trip. Config attributes are read
+back from the full-config download, which formats each attribute on its own line —
+parse with a multiline-aware matcher.
+
 #### Reboot (`SYSTEM_CONTROL`/1007)
 Captured from AjDevTools "Batch Reboot": a `SYSTEM_CONTROL_MESSAGE`/`1007` with an
 empty body reboots the camera. `AnjoyCommClient.reboot()` implements it
