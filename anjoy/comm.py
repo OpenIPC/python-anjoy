@@ -220,6 +220,13 @@ class AnjoyCommClient:
     def heartbeat(self) -> None:
         self._send("AUXPTZ_HEARTBEAT_MESSAGE", "CMD_HEARTBEAT")
 
+    def reboot(self) -> None:
+        """Reboot the camera. Captured from AjDevTools "Batch Reboot": a
+        ``SYSTEM_CONTROL_MESSAGE``/``1007`` with an empty body. Fire-and-forget —
+        the device reboots and drops the connection; reconnect after it comes
+        back (~30 s)."""
+        self._send("SYSTEM_CONTROL_MESSAGE", "1007")
+
     # -- file upload (SYSTEM_CONTROL/1022 announce + MEDIA_DATA/1 chunks) ----
     # Captured from AjDevTools "Upload config" against a live MTF45-4G_AF.
     def _media_data_frame(self, start_pos: int, data: bytes) -> bytes:
