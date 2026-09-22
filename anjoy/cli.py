@@ -61,7 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_rt = sub.add_parser("rtsp", help="record live video over RTSP (ffmpeg)")
     p_rt.add_argument("output", nargs="?", default="rtsp.mp4")
-    p_rt.add_argument("--stream", type=int, default=0,
+    p_rt.add_argument("--stream", type=int, default=0, choices=(0, 1),
                       help="0=MainStream, 1=SubStream (current-gen Anjoy)")
     p_rt.add_argument("--duration", type=float, default=10.0)
     p_rt.add_argument("--legacy-template", metavar="TMPL",

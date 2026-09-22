@@ -79,6 +79,7 @@ class AnjoyCommClient:
         self.sessionid = ""
         self.group: str | None = None
         self._buf = b""
+        self._pending_len: int | None = None
 
     # -- connection ---------------------------------------------------------
     def connect(self) -> None:
@@ -94,6 +95,7 @@ class AnjoyCommClient:
         self.sessionid = ""
         self.group = None
         self._buf = b""
+        self._pending_len = None
 
     def __enter__(self):
         if self.sock is None:
@@ -117,13 +119,20 @@ class AnjoyCommClient:
 
     def recv_frame(self) -> tuple[str, bytes]:
         """Read one framed message; return (msg_type, raw_xml_bytes)."""
-        header = self._recv_exact(8)
-        if header[:4] != MAGIC:
-            raise AnjoyError(f"bad AJ magic {header[:4].hex()} (expected 58915851)")
-        length = struct.unpack("<I", header[4:8])[0]
-        if length > MAX_FRAME:
-            raise AnjoyError(f"AJ frame length {length} exceeds cap {MAX_FRAME}")
-        xml = self._recv_exact(length)
+        # Resumable across read timeouts: a partial header stays in ``_buf`` and
+        # continues on the next call; once the header is parsed its length is
+        # remembered in ``_pending_len`` so a timeout mid-body does not restart
+        # header parsing from the buffered body bytes.
+        if self._pending_len is None:
+            header = self._recv_exact(8)
+            if header[:4] != MAGIC:
+                raise AnjoyError(f"bad AJ magic {header[:4].hex()} (expected 58915851)")
+            length = struct.unpack("<I", header[4:8])[0]
+            if length > MAX_FRAME:
+                raise AnjoyError(f"AJ frame length {length} exceeds cap {MAX_FRAME}")
+            self._pending_len = length
+        xml = self._recv_exact(self._pending_len)
+        self._pending_len = None
         # The device NULL-terminates its frames (the length counts the trailing
         # \x00); strip it or ElementTree rejects "junk after document element".
         xml = xml.rstrip(b"\x00")

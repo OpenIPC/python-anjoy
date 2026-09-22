@@ -186,5 +186,31 @@ class TestReviewFixes(unittest.TestCase):
         self.assertIn(b"AUXPTZ_HEARTBEAT_MESSAGE", c.sock.sent)   # heartbeat was sent
 
 
+    def test_events_resumes_after_timeout_mid_body(self):
+        # A timeout AFTER the header but mid-body must not reparse buffered body
+        # bytes as a new header (regression for the resumable-frame fix).
+        import socket as _s
+        from anjoy.comm import MAGIC
+        alarm = build_envelope("ALARM_REPORT_MESSAGE", "CMD_REPORT_ALARM")
+        frame = MAGIC + struct.pack("<I", len(alarm)) + alarm
+        split = 8 + 5   # header + 5 body bytes, then a timeout, then the rest
+
+        class SplitSock:
+            def __init__(self): self.stage = 0; self.sent = b""
+            def recv(self, n):
+                self.stage += 1
+                if self.stage == 1:
+                    return frame[:split]        # header + partial body
+                if self.stage == 2:
+                    raise _s.timeout("idle mid-body")
+                return frame[split:]            # remainder of the body
+            def sendall(self, b): self.sent += b
+            def close(self): pass
+
+        c = AnjoyCommClient("x"); c.sock = SplitSock()
+        mt, xml = next(c.events(heartbeat_on_idle=False))
+        self.assertEqual(mt, "ALARM_REPORT_MESSAGE")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -36,6 +36,19 @@ class TestRTSP(unittest.TestCase):
     def test_anjoy_url_substream(self):
         self.assertIn("/stream1", rtsp.anjoy_rtsp_url("h", "u", "p", stream=1))
 
+    def test_invalid_stream_errors_before_recording(self):
+        import io, contextlib
+        from anjoy import cli, rtsp as rtsp_mod
+        called = {"n": 0}
+        orig = rtsp_mod.record_rtsp
+        rtsp_mod.record_rtsp = lambda *a, **k: called.__setitem__("n", called["n"] + 1)
+        try:
+            with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                cli.main(["10.0.0.5", "rtsp", "--stream", "5"])
+        finally:
+            rtsp_mod.record_rtsp = orig
+        self.assertEqual(called["n"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
