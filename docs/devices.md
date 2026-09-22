@@ -133,8 +133,10 @@ scheduled auto-reboot; the device stores `Time` space-padded, e.g. `" 2: 0: 0"`)
 Typed wrappers over the primitive:
 
 * `set_title(title, confirm=True)` — read-modify-write of `<Overlay>`: only the
-  `<TitleOverlay>` title changes (position/font/timestamp/user-OSD preserved); the
-  title is hex-encoded (`TitleUtf8` = UTF-8 hex, legacy `Title` = GB2312 hex).
+  `<TitleOverlay>` title changes (position/font/timestamp/user-OSD preserved).
+  `TitleUtf8` (hex of the UTF-8 bytes) is always set, so any title works; the
+  legacy `Title` field (hex of the GB2312 bytes) is updated only when the device
+  config carries it, and only that path is limited to the GB2312 charset.
 * `set_maintenance(enable, day=7, time="HH:MM:SS", confirm=True)` — code 228
   (`day=7` = every day, per the vendor UI).
 

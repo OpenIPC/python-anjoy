@@ -431,10 +431,6 @@ class AnjoyCommClient:
         """
         if not confirm:
             raise AnjoyError("set_title writes device config; pass confirm=True")
-        try:
-            title.encode("gb2312")            # device charset for the legacy field
-        except UnicodeEncodeError as e:
-            raise AnjoyError(f"title is not GB2312-encodable: {title!r}") from e
         cfg = self.get_config()
         m = re.search(rb"<Overlay\b.*?</Overlay>", cfg, re.S)
         if not m:
@@ -443,9 +439,16 @@ class AnjoyCommClient:
         t = root.find("TitleOverlay")
         if t is None:
             raise AnjoyError("device Overlay config has no <TitleOverlay>")
-        t.set("TitleUtf8", title.encode("utf-8").hex())
+        t.set("TitleUtf8", title.encode("utf-8").hex())   # always safe: hex of UTF-8
         if t.get("Title") is not None:
-            t.set("Title", title.encode("gb2312").hex())
+            # the legacy Title field carries GB2312 bytes — only this path is
+            # charset-limited, so validate here rather than rejecting every title.
+            try:
+                t.set("Title", title.encode("gb2312").hex())
+            except UnicodeEncodeError as e:
+                raise AnjoyError(
+                    "title needs the legacy GB2312 <TitleOverlay Title> field but "
+                    f"is not GB2312-encodable: {title!r}") from e
         body = ET.tostring(root, encoding="unicode")
         return self.set_config_section(const.CFG_OVERLAY, body, confirm=True)
 

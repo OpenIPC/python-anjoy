@@ -471,6 +471,35 @@ class TestDownload(unittest.TestCase):
         self.assertIn(b'Title="43616d32"', sect)
         self.assertIn(b"TimeOverlay", sect)            # other overlay settings kept
 
+    def test_set_title_utf8_only_overlay_accepts_non_gb2312(self):
+        # overlay with only TitleUtf8 (no legacy Title) — an emoji title must work
+        cfg = (b'<IPCConfig><MediaConfig><Video><Overlay Enable="1">'
+               b'<TitleOverlay TitleUtf8="43616d657261" /></Overlay>'
+               b'</Video></MediaConfig></IPCConfig>')
+        with FakeCommServer() as srv:
+            srv.download_content = cfg
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            c.set_title("\U0001F4F7", confirm=True)     # 📷, not GB2312-encodable
+            c.close()
+        code, sect = srv.config_sets[0]
+        self.assertEqual(code, "525")
+        self.assertIn(b'TitleUtf8="f09f93b7"', sect)    # hex of UTF-8 bytes
+        self.assertNotIn(b"Title=", sect.replace(b"TitleUtf8=", b""))  # no legacy Title added
+
+    def test_set_title_non_gb2312_with_legacy_title_raises(self):
+        from anjoy.exceptions import AnjoyError
+        cfg = (b'<IPCConfig><MediaConfig><Video><Overlay Enable="1">'
+               b'<TitleOverlay TitleUtf8="43616d657261" Title="43616d657261" />'
+               b'</Overlay></Video></MediaConfig></IPCConfig>')
+        with FakeCommServer() as srv:
+            srv.download_content = cfg
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            with self.assertRaises(AnjoyError):
+                c.set_title("\U0001F4F7", confirm=True)  # legacy Title can't hold it
+            c.close()
+
     def test_set_title_requires_confirm(self):
         from anjoy.exceptions import AnjoyError
         c = AnjoyCommClient("x"); c.sock = _FakeSock()
