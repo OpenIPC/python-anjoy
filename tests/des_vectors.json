@@ -1,0 +1,30 @@
+{
+  "key": "WebLogin",
+  "note": "stringToHex(des(KEY, input, 1, 0)) from vendor des.js",
+  "vectors": {
+    "123456": "a17faccd02661e4c",
+    "888888": "7656e77274aca3c6",
+    "12345678": "a49ce4acf5c268b1",
+    "": "",
+    "a": "b4b4cfb9437ba29e",
+    "ab": "8eb889a9c632fd74",
+    "abc": "9c809469936a40b0",
+    "abcd": "97a49238ea62b19b",
+    "abcde": "743c7815231623e3",
+    "abcdef": "12d013d1e68cac89",
+    "abcdefg": "fe9c3f7416eca19e",
+    "abcdefgh": "4b24819b8505b9b5",
+    "abcdefghi": "4b24819b8505b9b5e8b7e01c8a97a456",
+    "abcdefghij": "4b24819b8505b9b5f5c2a3de108a6b4b",
+    "admin": "52851dbd7918bbae",
+    "password": "83d0cfed87e96b79",
+    "WebLogin": "5d1e5a89b79745d9",
+    "admin123456": "439ea0ae332a652ad828adc7a5e6f46a",
+    "A1!@#$%^&*()": "9a4736453d599bb940ca32a741e8b7cc",
+    "root": "902468fa882bc8a4",
+    "guest": "fcb8931016d783df",
+    "operator": "d9cbd0c012ff4173",
+    "0123456789abcdef": "77fa329a4de67f1695d2f9ce36849ad3",
+    "The quick brown fox": "77432441c365b9efd1a60fbb2f3c0945af0d5993ad9625d9"
+  }
+}
