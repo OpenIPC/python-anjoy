@@ -54,6 +54,8 @@ class _FakeSock:
         self.sent += b
     def close(self):
         pass
+    def settimeout(self, t):
+        pass
 
 
 class TestRecvFrame(unittest.TestCase):
@@ -224,11 +226,39 @@ class TestExecUserCmd(unittest.TestCase):
         c = AnjoyCommClient("x")
         frame = c.build_exec_frame('echo "a&b"', "killall comm_server")
         self.assertEqual(frame[:4], MAGIC)
-        xml = frame[8:].decode("gb2312").lstrip()
-        root = ET.fromstring(xml)            # must parse (DATA escaped)
+        root = ET.fromstring(frame[8:].decode("gb2312").lstrip())
         cmds = [e.get("DATA") for e in root.iter("CMD")]
         self.assertEqual(cmds, ['echo "a&b"', "killall comm_server"])
         self.assertIn(b'Msg_type="SYSTEM_CONFIG_SET_MESSAGE"', frame)
+
+    def test_rejects_non_gb2312_command(self):
+        from anjoy.exceptions import AnjoyError
+        c = AnjoyCommClient("x")
+        with self.assertRaises(AnjoyError):
+            c.build_exec_frame("echo \U0001F3A5")   # emoji: not GB2312-encodable
+
+    def test_exec_skips_pushed_alarm_then_returns_ack(self):
+        c = AnjoyCommClient("x")
+        alarm = build_envelope("ALARM_REPORT_MESSAGE", "CMD_REPORT_ALARM")
+        ack = build_envelope("SYSTEM_CONFIG_SET_MESSAGE", "CMD_CONFIG_UPDATE")
+        inbound = (MAGIC + struct.pack("<I", len(alarm)) + alarm +
+                   MAGIC + struct.pack("<I", len(ack)) + ack)
+        c.sock = _FakeSock(inbound)
+        mt, _ = c.exec_cmd("true", confirm=True)     # alarm skipped, ack returned
+        self.assertEqual(mt, "SYSTEM_CONFIG_SET_MESSAGE")
+
+    def test_exec_raises_on_timeout(self):
+        import socket as _s
+        from anjoy.exceptions import AnjoyError
+        class TimeoutSock:
+            def __init__(self): self.sent = b""
+            def sendall(self, b): self.sent += b
+            def recv(self, n): raise _s.timeout("no ack")
+            def settimeout(self, t): pass
+            def close(self): pass
+        c = AnjoyCommClient("x"); c.sock = TimeoutSock()
+        with self.assertRaises(AnjoyError):
+            c.exec_cmd("true", confirm=True)
 
     def test_exec_cmd_roundtrip_against_fake_server(self):
         with FakeCommServer() as srv:
@@ -237,8 +267,7 @@ class TestExecUserCmd(unittest.TestCase):
             mt, _ = c.exec_cmd("true", confirm=True)
             self.assertEqual(mt, "SYSTEM_CONFIG_SET_MESSAGE")   # device ack
             c.close()
-        types = [t for t, _ in srv.received]
-        self.assertIn("SYSTEM_CONFIG_SET_MESSAGE", types)
+        self.assertIn("SYSTEM_CONFIG_SET_MESSAGE", [t for t, _ in srv.received])
 
 
 if __name__ == "__main__":
