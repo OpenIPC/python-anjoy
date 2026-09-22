@@ -371,6 +371,10 @@ class AnjoyCommClient:
         is then fetched with :meth:`download_file`. *stream* 0=main, 1=sub;
         *quality* 1-100. Read-only.
         """
+        if int(stream) not in (0, 1):
+            raise ValueError("stream must be 0 (main) or 1 (sub)")
+        if not 1 <= int(quality) <= 100:
+            raise ValueError("quality must be 1-100")
         body = f'<REQUEST_PARAM Stream="{int(stream)}" Quality="{int(quality)}"/>'
         self._send("SYSTEM_CONTROL_MESSAGE", "1043", body)
         self.sock.settimeout(self.timeout)
@@ -378,7 +382,7 @@ class AnjoyCommClient:
         m = re.search(rb'JpgFile="([^"]+)"', resp)
         if not m:
             raise AnjoyError("snapshot: device returned no JpgFile")
-        name = m.group(1).decode("ascii", "replace")
+        name = m.group(1).decode("gb2312", "replace")   # protocol encoding, not ASCII
         return self.download_file("/tmp/" + name)
 
     def build_exec_frame(self, *commands: str) -> bytes:

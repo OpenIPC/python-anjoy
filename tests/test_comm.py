@@ -369,5 +369,13 @@ class TestDownload(unittest.TestCase):
             c.snapshot()
 
 
+    def test_snapshot_rejects_bad_params(self):
+        c = AnjoyCommClient("x"); c.sock = _FakeSock()
+        with self.assertRaises(ValueError):
+            c.snapshot(stream=2)
+        with self.assertRaises(ValueError):
+            c.snapshot(quality=0)
+
+
 if __name__ == "__main__":
     unittest.main()
