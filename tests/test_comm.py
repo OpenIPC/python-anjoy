@@ -52,6 +52,8 @@ class _FakeSock:
         return out
     def sendall(self, b):
         self.sent += b
+    def close(self):
+        pass
 
 
 class TestRecvFrame(unittest.TestCase):
@@ -109,6 +111,105 @@ class TestAgainstFakeServer(unittest.TestCase):
         types = [t for t, _ in srv.received]
         self.assertEqual(types[0], "USER_AUTH_MESSAGE")
         self.assertIn("PTZ_CONTROL_MESSAGE", types)
+
+
+class TestReviewFixes(unittest.TestCase):
+    def test_credentials_are_xml_escaped(self):
+        c = AnjoyCommClient("x", user='a"b&c', password='p<>"&')
+        c.sock = _FakeSock()
+        # build the auth frame the way login() does
+        from anjoy.comm import _attr
+        body = (f'<USER_AUTH_PARAM Username="{_attr(c.user)}" '
+                f'Password="{_attr(c.password)}" AuthMethod="1" />')
+        c._send("USER_AUTH_MESSAGE", "CMD_USER_AUTH", body)
+        sent = c.sock.sent
+        self.assertNotIn(b'Username="a"b&c"', sent)        # raw quote/amp gone
+        self.assertIn(b"&quot;", sent)
+        self.assertIn(b"&amp;", sent)
+        # the frame body still parses as XML
+        import xml.etree.ElementTree as ET
+        ET.fromstring(sent[8:].decode("gb2312").lstrip())
+
+    def test_ptz_cmd_escaped(self):
+        c = AnjoyCommClient("x"); c.sock = _FakeSock()
+        c.ptz('a<b&c"')
+        import xml.etree.ElementTree as ET
+        ET.fromstring(c.sock.sent[8:].decode("gb2312").lstrip())  # well-formed
+
+    def test_recv_frame_rejects_oversized_length(self):
+        from anjoy.comm import MAGIC, MAX_FRAME
+        from anjoy.exceptions import AnjoyError
+        big = struct.pack("<I", MAX_FRAME + 1)
+        c = AnjoyCommClient("x"); c.sock = _FakeSock(MAGIC + big)
+        with self.assertRaises(AnjoyError):
+            c.recv_frame()
+
+    def test_connect_close_reset_state(self):
+        c = AnjoyCommClient("x")
+        c.sessionid = "S"; c.group = "G"; c._buf = b"leftover"
+        c.close()
+        self.assertEqual((c.sessionid, c.group, c._buf), ("", None, b""))
+
+    def test_login_closes_socket_on_failure(self):
+        # a fake sock that returns a non-auth frame then EOF -> login should fail + close
+        from anjoy.comm import MAGIC
+        body = build_envelope("SYSTEM_CONTROL_MESSAGE", "1020")
+        frame = MAGIC + struct.pack("<I", len(body)) + body
+        c = AnjoyCommClient("x")
+        c.sock = _FakeSock(frame)   # no USER_AUTH response, then recv returns b"" -> error
+        from anjoy.exceptions import AnjoyError
+        with self.assertRaises(AnjoyError):
+            c.login()
+        self.assertIsNone(c.sock)   # closed
+
+    def test_events_survives_idle_timeout(self):
+        import socket as _s
+        from anjoy.comm import MAGIC
+        alarm = build_envelope("ALARM_REPORT_MESSAGE", "CMD_REPORT_ALARM")
+        frame = MAGIC + struct.pack("<I", len(alarm)) + alarm
+
+        class TimeoutOnceSock:
+            def __init__(self): self.calls = 0; self._data = frame; self.sent = b""
+            def recv(self, n):
+                self.calls += 1
+                if self.calls == 1:
+                    raise _s.timeout("idle")
+                out, self._data = self._data[:n], self._data[n:]
+                return out
+            def sendall(self, b): self.sent += b
+            def close(self): pass
+
+        c = AnjoyCommClient("x"); c.sock = TimeoutOnceSock()
+        gen = c.events(heartbeat_on_idle=True)
+        mt, _ = next(gen)                       # first recv times out -> heartbeat -> retries
+        self.assertEqual(mt, "ALARM_REPORT_MESSAGE")
+        self.assertIn(b"AUXPTZ_HEARTBEAT_MESSAGE", c.sock.sent)   # heartbeat was sent
+
+
+    def test_events_resumes_after_timeout_mid_body(self):
+        # A timeout AFTER the header but mid-body must not reparse buffered body
+        # bytes as a new header (regression for the resumable-frame fix).
+        import socket as _s
+        from anjoy.comm import MAGIC
+        alarm = build_envelope("ALARM_REPORT_MESSAGE", "CMD_REPORT_ALARM")
+        frame = MAGIC + struct.pack("<I", len(alarm)) + alarm
+        split = 8 + 5   # header + 5 body bytes, then a timeout, then the rest
+
+        class SplitSock:
+            def __init__(self): self.stage = 0; self.sent = b""
+            def recv(self, n):
+                self.stage += 1
+                if self.stage == 1:
+                    return frame[:split]        # header + partial body
+                if self.stage == 2:
+                    raise _s.timeout("idle mid-body")
+                return frame[split:]            # remainder of the body
+            def sendall(self, b): self.sent += b
+            def close(self): pass
+
+        c = AnjoyCommClient("x"); c.sock = SplitSock()
+        mt, xml = next(c.events(heartbeat_on_idle=False))
+        self.assertEqual(mt, "ALARM_REPORT_MESSAGE")
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@
     anjoy 192.168.0.123 ptz stop
     anjoy 192.168.0.123 preset goto 94
     anjoy 192.168.0.123 config /getPtzConfig
-    anjoy 192.168.0.123 rtsp out.mp4 --duration 5 --template '/live/0_0'
+    anjoy 192.168.0.123 rtsp out.mp4 --duration 5 --stream 0
     anjoy 192.168.0.123 call /getSystemVersionInfo
 """
 
@@ -61,10 +61,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_rt = sub.add_parser("rtsp", help="record live video over RTSP (ffmpeg)")
     p_rt.add_argument("output", nargs="?", default="rtsp.mp4")
-    p_rt.add_argument("--channel", type=int, default=0)
-    p_rt.add_argument("--subtype", type=int, default=0)
+    p_rt.add_argument("--stream", type=int, default=0, choices=(0, 1),
+                      help="0=MainStream, 1=SubStream (current-gen Anjoy)")
     p_rt.add_argument("--duration", type=float, default=10.0)
-    p_rt.add_argument("--template", default=rtsp.DEFAULT_TEMPLATE)
+    p_rt.add_argument("--legacy-template", metavar="TMPL",
+                      help="use the legacy /live-style path + userinfo auth "
+                           "(older firmware); e.g. '/live/{channel}_{subtype}'")
+    p_rt.add_argument("--channel", type=int, default=0, help="legacy template only")
+    p_rt.add_argument("--subtype", type=int, default=0, help="legacy template only")
 
     p_call = sub.add_parser("call", help="raw endpoint call")
     p_call.add_argument("endpoint")
@@ -106,9 +110,13 @@ def main(argv=None) -> int:
         elif args.command == "reboot":
             _print(cam.reboot())
         elif args.command == "rtsp":
-            url = rtsp.build_rtsp_url(args.host, args.user, args.password,
-                                      channel=args.channel, subtype=args.subtype,
-                                      template=args.template)
+            if args.legacy_template:
+                url = rtsp.build_rtsp_url(args.host, args.user, args.password,
+                                          channel=args.channel, subtype=args.subtype,
+                                          template=args.legacy_template)
+            else:
+                url = rtsp.anjoy_rtsp_url(args.host, args.user, args.password,
+                                          stream=args.stream)
             print(f"recording {url} -> {args.output}", file=sys.stderr)
             rtsp.record_rtsp(url, args.output, args.duration)
             _print({"output": args.output, "url": url})

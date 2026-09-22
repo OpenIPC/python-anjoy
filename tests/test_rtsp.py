@@ -36,6 +36,41 @@ class TestRTSP(unittest.TestCase):
     def test_anjoy_url_substream(self):
         self.assertIn("/stream1", rtsp.anjoy_rtsp_url("h", "u", "p", stream=1))
 
+    def test_invalid_stream_errors_before_recording(self):
+        import io, contextlib
+        from anjoy import cli, rtsp as rtsp_mod
+        called = {"n": 0}
+        orig = rtsp_mod.record_rtsp
+        rtsp_mod.record_rtsp = lambda *a, **k: called.__setitem__("n", called["n"] + 1)
+        try:
+            with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                cli.main(["10.0.0.5", "rtsp", "--stream", "5"])
+        finally:
+            rtsp_mod.record_rtsp = orig
+        self.assertEqual(called["n"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRtspCli(unittest.TestCase):
+    def _capture_url(self, argv):
+        from anjoy import cli, rtsp as rtsp_mod
+        captured = {}
+        orig = rtsp_mod.record_rtsp
+        rtsp_mod.record_rtsp = lambda url, out, dur: captured.setdefault("url", url)
+        try:
+            cli.main(argv)
+        finally:
+            rtsp_mod.record_rtsp = orig
+        return captured.get("url", "")
+
+    def test_default_uses_anjoy_stream_url(self):
+        url = self._capture_url(["10.0.0.5", "rtsp", "out.mp4", "--stream", "0"])
+        self.assertEqual(
+            url, "rtsp://10.0.0.5:554/stream0?username=admin&password=E10ADC3949BA59ABBE56E057F20F883E")
+
+    def test_legacy_template_still_available(self):
+        url = self._capture_url(["10.0.0.5", "rtsp", "out.mp4", "--legacy-template", "/live/{channel}_{subtype}"])
+        self.assertEqual(url, "rtsp://admin:123456@10.0.0.5:554/live/0_0")
