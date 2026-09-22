@@ -42,10 +42,28 @@ password.
 > firmware generation (MC-K45 etc.) and is unverified on hardware.
 
 ### Vendor-specific = the binary AJ protocol on 8091 (`comm_server`)
-This is what ONVIF does **not** cover (e.g. `EXECUTE_USER_CMD`, factory config).
-Live probe: port 8091 accepts a TCP connection, sends no banner, and resets the
-connection on guessed framing (raw XML, LE/BE length-prefixed XML all RST). The
-exact framing + `USER_AUTH` handshake must be captured from `AjDevTools` /
-`CameraTestTool` driving a unit (`tcpdump`) before `anjoy/comm.py` can implement
-it. Do not brute-force 8091 against hardware — these Sigmastar units can reboot
-under probing.
+What ONVIF does **not** cover. **Decoded and implemented** in `anjoy/comm.py`
+(`AnjoyCommClient`) — captured live from the vendor CameraTestTool and validated
+end-to-end against the device.
+
+- **Frame** = magic `58 91 58 51` + 4-byte **little-endian** length + GB2312 XML
+  (`<XML_TOPSEE>` envelope). The header may arrive in a separate TCP segment; the
+  device **NULL-terminates** its response frames (the length counts the trailing
+  `\x00`) — strip it before XML parsing.
+- **Auth is plaintext** (`AuthMethod="1"`): `USER_AUTH_MESSAGE`/`CMD_USER_AUTH`
+  with `<USER_AUTH_PARAM Username=".." Password=".." AuthMethod="1"/>`; reply is
+  `<USER_AUTH_RESPONSE Sessionid="<YYYYMMDDHHMMSS>_<16hex>" Group="Administrator"/>`.
+  Every later frame carries that `Sessionid`.
+- **PTZ**: `PTZ_CONTROL_MESSAGE`/`PTZ_CMD`, body
+  `<xml><cmd>VERB</cmd><panspeed>N</panspeed><tiltspeed>N</tiltspeed></xml>`
+  (verbs incl. `zoomtele`/`zoomwide`/`stop`/`PtzRestore`/`PtzReboot`; press-and-hold
+  then `stop`).
+- Also: `SYSTEM_CONTROL_MESSAGE` (1020 init; 1032 start-stream
+  `<REQUEST_PARAM Camera="0" Stream="0"/>`), `AUXPTZ_HEARTBEAT_MESSAGE` keepalive,
+  and `ALARM_REPORT_MESSAGE` **pushed by the camera** (e.g. "video Human shape
+  detected"). Raw capture: `../MC-F45-4MP-PTZ18x/aj8091-capture.{tx,rx}.bin` in the
+  research repo.
+
+> `comm_server` is **single-session**: reconnect too fast after a drop and it may
+> not answer until the prior session ages out. Space reconnects; don't brute-force
+> it (these Sigmastar units can reboot under probing).

@@ -14,6 +14,7 @@ from .exceptions import AnjoyError, AnjoyAPIError, LoginError
 from .des import des_hex, des_ecb_encrypt, WEBLOGIN_KEY
 from .soap import AnjoySOAPTransport, extract, check_response
 from .client import AnjoyClient
+from .comm import AnjoyCommClient
 from . import discovery
 from .discovery import discover
 from . import rtsp
@@ -28,6 +29,7 @@ except Exception:  # noqa: BLE001
 
 __all__ = [
     "AnjoyClient",
+    "AnjoyCommClient",
     "AsyncAnjoyClient",
     "AnjoySOAPTransport",
     "discover",

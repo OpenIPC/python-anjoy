@@ -1,45 +1,178 @@
-"""Binary AJ protocol client (``comm_server``, TCP 8091) — CAPTURE-GATED (WIP).
+"""Binary AJ protocol client — ``comm_server`` on TCP 8091.
 
-Anjoy's richer control surface speaks ``XML_ANJVISION`` / ``XML_TOPSEE`` GB2312
-XML envelopes over TCP 8091 and carries, among others, ``USER_AUTH_MESSAGE``,
-``SYSTEM_CONFIG_GET/SET``, ``PTZ_CONTROL_MESSAGE``, ``ALARM_REPORT_MESSAGE`` and
-— notably — ``EXECUTE_USER_CMD`` (arbitrary shell on the device).
+This is the vendor-specific control channel ONVIF does not cover. The wire format
+was captured live from the vendor CameraTestTool driving an MTF45-4G_AF and is:
 
-The message envelope and the endpoint semantics are known (see the anjoy research
-repo ``docs/aj-protocol.md``), but the TCP framing (length prefix?) and the
-``USER_AUTH`` / ``EncryptPwd`` handshake must be read off a packet capture of the
-vendor tools driving a live unit before this can be implemented. Until then, use
-the SOAP client (:class:`anjoy.client.AnjoyClient`).
+* **Frame** = 4-byte magic ``58 91 58 51`` + 4-byte little-endian length + that
+  many bytes of GB2312-encoded XML (an ``<XML_TOPSEE>`` envelope). The header may
+  arrive in a separate TCP segment from the body.
+* **Envelope**::
 
-Live probe (MTF45-4G_AF, port 8091): the port accepts a TCP connection, sends
-no banner, and RESETS the connection when fed guessed framing (raw XML envelope,
-LE/BE length-prefixed XML all RST). So the framing + USER_AUTH handshake must be
-captured from AjDevTools/CameraTestTool driving a unit before this can be
-implemented. Do NOT brute-force 8091 against hardware (reboot risk).
+      <?xml version="1.0" encoding="GB2312" ?>
+      <XML_TOPSEE>
+      <MESSAGE_HEADER Msg_type=".." Msg_code=".." Msg_channel="0" Msg_flag="0" Sessionid=".."/>
+      <MESSAGE_BODY> .. </MESSAGE_BODY>
+      </XML_TOPSEE>
 
-For standard device/PTZ/stream control on current-generation Anjoy, use ONVIF
-(port 80) + RTSP (see docs/devices.md) — this module is only for the
-vendor-specific channel ONVIF does not cover (EXECUTE_USER_CMD, factory config).
-
-Envelope shape (from the SDK), for reference::
-
-    <?xml version="1.0" encoding="GB2312" ?>
-    <XML_ANJVISION>
-      <MESSAGE_HEADER Msg_type="..." Msg_code="N" Msg_flag="0" SOURCE="AJTOOLS" />
-      <MESSAGE_BODY> ... </MESSAGE_BODY>
-    </XML_ANJVISION>
+* **Auth** is plaintext: send ``USER_AUTH_MESSAGE`` /``CMD_USER_AUTH`` with
+  ``<USER_AUTH_PARAM Username=".." Password=".." AuthMethod="1"/>`` (Sessionid
+  empty); the reply carries ``<USER_AUTH_RESPONSE Sessionid=".." Group=".."/>``.
+  Every later frame echoes that Sessionid.
+* **PTZ** rides ``PTZ_CONTROL_MESSAGE`` /``PTZ_CMD`` with the body
+  ``<xml><cmd>VERB</cmd><panspeed>N</panspeed><tiltspeed>N</tiltspeed></xml>``
+  (verbs: up/down/left/right/…, zoomtele/zoomwide, PtzRestore, PtzReboot, stop).
+* The camera **pushes** ``ALARM_REPORT_MESSAGE`` frames on the same connection.
 """
 
 from __future__ import annotations
 
-from . import const  # noqa: F401
+import socket
+import re
+import struct
+import xml.etree.ElementTree as ET
+from typing import Iterator
+
+from . import const
+from .exceptions import AnjoyError, LoginError
+
+MAGIC = b"\x58\x91\x58\x51"
+_XML_DECL = '<?xml version="1.0" encoding="GB2312" ?>'
+
+
+def build_envelope(msg_type: str, msg_code: str, body: str = "",
+                   sessionid: str = "", channel: int = 0) -> bytes:
+    # Structure mirrors the vendor's captured frames: a leading newline, the
+    # header on one line, and (when present) the body wrapped in newlines. The
+    # device is sensitive to this shape — a bare XML declaration is ignored.
+    header = (f'<MESSAGE_HEADER Msg_type="{msg_type}" Msg_code="{msg_code}" '
+              f'Msg_channel="{channel}" Msg_flag="0" Sessionid="{sessionid}"  />')
+    body_el = f"<MESSAGE_BODY>\n{body}\n</MESSAGE_BODY>" if body else "<MESSAGE_BODY/>"
+    doc = f"\n{_XML_DECL}\n<XML_TOPSEE>\n{header}\n{body_el}\n</XML_TOPSEE>\n"
+    return doc.encode("gb2312", "replace")
+
+
+def build_frame(xml: bytes) -> bytes:
+    return MAGIC + struct.pack("<I", len(xml)) + xml
 
 
 class AnjoyCommClient:
-    """Placeholder for the binary AJ protocol client (not yet implemented)."""
+    """A single ``comm_server`` (TCP 8091) connection: framing + plaintext auth."""
 
-    def __init__(self, *args, **kwargs):
-        raise NotImplementedError(
-            "The binary AJ protocol (comm_server, port 8091) is capture-gated; "
-            "pin the TCP framing + USER_AUTH handshake from a live capture first. "
-            "Use anjoy.client.AnjoyClient (SOAP API) in the meantime.")
+    def __init__(self, host: str, user: str = const.DEFAULT_USER,
+                 password: str = const.DEFAULT_PASSWORD,
+                 port: int = const.COMM_PORT, timeout: float = const.DEFAULT_TIMEOUT):
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+        self.user = user
+        self.password = password
+        self.sock: socket.socket | None = None
+        self.sessionid = ""
+        self.group: str | None = None
+        self._buf = b""
+
+    # -- connection ---------------------------------------------------------
+    def connect(self) -> None:
+        self.sock = socket.create_connection((self.host, self.port), self.timeout)
+
+    def close(self) -> None:
+        if self.sock is not None:
+            try:
+                self.sock.close()
+            finally:
+                self.sock = None
+
+    def __enter__(self):
+        if self.sock is None:
+            self.connect()
+        self.login()
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+    # -- framing ------------------------------------------------------------
+    def _send(self, msg_type: str, msg_code: str, body: str = "",
+              channel: int = 0) -> None:
+        assert self.sock is not None, "not connected"
+        xml = build_envelope(msg_type, msg_code, body, self.sessionid, channel)
+        self.sock.sendall(build_frame(xml))
+
+    def recv_frame(self) -> tuple[str, bytes]:
+        """Read one framed message; return (msg_type, raw_xml_bytes)."""
+        header = self._recv_exact(8)
+        if header[:4] != MAGIC:
+            raise AnjoyError(f"bad AJ magic {header[:4].hex()} (expected 58915851)")
+        length = struct.unpack("<I", header[4:8])[0]
+        xml = self._recv_exact(length)
+        # The device NULL-terminates its frames (the length counts the trailing
+        # \x00); strip it or ElementTree rejects "junk after document element".
+        xml = xml.rstrip(b"\x00")
+        mt = ""
+        try:
+            root = ET.fromstring(xml.decode("gb2312", "replace"))
+            hdr = root.find("MESSAGE_HEADER")
+            if hdr is not None:
+                mt = hdr.get("Msg_type", "")
+        except ET.ParseError:
+            m = re.search(rb'Msg_type="([^"]+)"', xml)
+            if m:
+                mt = m.group(1).decode("ascii", "replace")
+        return mt, xml
+
+    def _recv_exact(self, n: int) -> bytes:
+        assert self.sock is not None, "not connected"
+        while len(self._buf) < n:
+            chunk = self.sock.recv(65536)
+            if not chunk:
+                raise AnjoyError("comm_server closed the connection")
+            self._buf += chunk
+        out, self._buf = self._buf[:n], self._buf[n:]
+        return out
+
+    # -- auth ---------------------------------------------------------------
+    def login(self) -> str:
+        """Send the plaintext USER_AUTH and capture the session id."""
+        body = (f'<USER_AUTH_PARAM Username="{self.user}" '
+                f'Password="{self.password}" AuthMethod="1" />')
+        self._send("USER_AUTH_MESSAGE", "CMD_USER_AUTH", body)
+        while True:
+            mt, xml = self.recv_frame()
+            if mt == "USER_AUTH_MESSAGE":
+                break
+        root = ET.fromstring(xml.decode("gb2312", "replace"))
+        resp = root.find(".//USER_AUTH_RESPONSE")
+        if resp is None or not resp.get("Sessionid"):
+            raise LoginError("comm_server auth rejected (no session id)")
+        self.sessionid = resp.get("Sessionid", "")
+        self.group = resp.get("Group")
+        return self.sessionid
+
+    # -- PTZ ----------------------------------------------------------------
+    def ptz(self, cmd: str, panspeed: int = 3, tiltspeed: int = 3) -> None:
+        """Send one PTZ verb. Motion verbs are press-and-hold — follow with
+        :meth:`ptz_stop`. Lens verbs: ``zoomtele``/``zoomwide``. Feature verbs:
+        ``PtzRestore``/``PtzReboot`` (and preset calls via the web ``<cmd>``)."""
+        if cmd in const.PTZ_DIRECTIONS or cmd in ("zoomtele", "zoomwide", "stop"):
+            body = (f"<xml><cmd>{cmd}</cmd><panspeed>{panspeed}</panspeed>"
+                    f"<tiltspeed>{tiltspeed}</tiltspeed></xml>")
+        else:
+            body = f"<xml><cmd>{cmd}</cmd></xml>"
+        self._send("PTZ_CONTROL_MESSAGE", "PTZ_CMD", body)
+
+    def ptz_stop(self) -> None:
+        self.ptz("stop")
+
+    def heartbeat(self) -> None:
+        self._send("AUXPTZ_HEARTBEAT_MESSAGE", "CMD_HEARTBEAT")
+
+    # -- low-level escape hatch --------------------------------------------
+    def send_message(self, msg_type: str, msg_code: str, body: str = "",
+                     channel: int = 0) -> None:
+        """Send an arbitrary AJ message with the current session id."""
+        self._send(msg_type, msg_code, body, channel)
+
+    def events(self) -> Iterator[tuple[str, bytes]]:
+        """Yield frames the camera pushes (e.g. ALARM_REPORT_MESSAGE) indefinitely."""
+        while True:
+            yield self.recv_frame()

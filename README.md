@@ -17,10 +17,11 @@ python-anjoy focuses on the **vendor-specific glue** ONVIF cannot give you:
 
 - **LAN discovery** — Anjoy's `SYSTEM_SEARCHIPC_MESSAGE` UDP broadcast
   (`anjoy.discover`), which finds cameras on any subnet by MAC/serial/name.
-- **The binary AJ protocol** on `comm_server` (TCP 8091) — `XML_ANJVISION` /
-  `XML_TOPSEE`, including `EXECUTE_USER_CMD` and factory config. **Capture-gated,
-  WIP** (`anjoy/comm.py`): the wire framing must be captured from the vendor tools
-  before it can be implemented — see `docs/devices.md`.
+- **The binary AJ protocol** on `comm_server` (TCP 8091) — `XML_TOPSEE` framing,
+  plaintext auth, PTZ, and camera-pushed alarms. **Implemented** in `anjoy/comm.py`
+  (`AnjoyCommClient`), decoded from a live capture and validated end-to-end against
+  an MTF45-4G_AF — see `docs/devices.md`. (`EXECUTE_USER_CMD` uses the same framing;
+  wiring it in is a follow-up.)
 - **RTSP URL helper** for Anjoy's confirmed query-param + MD5-password scheme
   (`anjoy.rtsp.anjoy_rtsp_url`).
 
@@ -64,7 +65,7 @@ Factory defaults: IP `192.168.0.123/24`, web `admin` / `123456`.
 | Standard control | custom web API (SOAP + DES) — legacy module here | **ONVIF** (use any ONVIF client) |
 | Video | RTSP | RTSP (`/stream0`, `/stream1`; MD5-password query auth) |
 | Discovery | AJ UDP probe (`anjoy.discover`) | AJ UDP probe |
-| Vendor extras | binary AJ on `comm_server` 8091 | binary AJ on `comm_server` 8091 |
+| Vendor extras | binary AJ on `comm_server` 8091 (`anjoy.comm`) | binary AJ on `comm_server` 8091 (`anjoy.comm`) |
 
 ## Development
 
