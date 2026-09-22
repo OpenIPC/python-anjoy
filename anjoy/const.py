@@ -143,6 +143,18 @@ AJ_ENCODING = "GB2312"
 # On-device path of the full config XML (AjDevTools "Batch Download Config").
 CONFIG_PATH = "/mnt/nand/config.xml"
 
+# -- SYSTEM_CONFIG_SET_MESSAGE section codes --------------------------------
+# The vendor's per-feature batch operations write ONE config section at a time:
+# ``SYSTEM_CONFIG_SET_MESSAGE`` carries the section's numeric ``Msg_code`` and the
+# section element as the body (a *partial* section is accepted — the device
+# merges it into the stored config), and the device replies with the same
+# type+code and an empty body to acknowledge. The write is applied asynchronously
+# (it reaches ``/mnt/nand/config.xml`` a moment later). Codes are discovered by
+# capturing AjDevTools live; each is added here once confirmed on hardware.
+# Reads go through the full-config download (:meth:`AnjoyCommClient.get_config`) —
+# the device's per-section GET is not what the vendor tool uses.
+CFG_OVERLAY = "525"      # MediaConfig/Video/Overlay — OSD title + timestamp
+
 # -- error codes ------------------------------------------------------------
 ANJOY_ERRORS = {
     285475072: "PTZ protocol not set on this channel",

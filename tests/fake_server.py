@@ -107,6 +107,7 @@ class FakeCommServer:
         self.received = []           # list of (msg_type, body_xml_bytes)
         self.upload_data = b""
         self.upload_expected = 0
+        self.config_sets = []        # list of (code, section_body_bytes) from SET
         self.download_content = b'<?xml version="1.0" encoding="GB2312" ?><IPCConfig><SystemConfig/></IPCConfig>'
         self.srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -219,6 +220,17 @@ class FakeCommServer:
                            f'<POS FileStartPos="0" StartPos="{len(data)}" DataLen="0" />\n'
                            '</MESSAGE_BODY>\n</XML_TOPSEE>').encode("gb2312")
                     conn.sendall(self._frame(eof, null_term=False))
+                elif mt == "SYSTEM_CONFIG_SET_MESSAGE":
+                    # per-section config write -> ack with same type+code, empty body
+                    mc = re.search(rb'Msg_code="([^"]+)"', body)
+                    code = mc.group(1).decode() if mc else ""
+                    inner = re.search(rb'<MESSAGE_BODY>(.*?)</MESSAGE_BODY>', body, re.S)
+                    self.config_sets.append((code, inner.group(1).strip() if inner else b""))
+                    ack = ('<?xml version="1.0" encoding="GB2312" ?>\n<XML_TOPSEE>\n'
+                           '<MESSAGE_HEADER\nMsg_type="SYSTEM_CONFIG_SET_MESSAGE"\n'
+                           f'Msg_code="{code}"\nMsg_flag="0"\n/>\n'
+                           '<MESSAGE_BODY/>\n</XML_TOPSEE>').encode("gb2312")
+                    conn.sendall(self._frame(ack))           # null-terminated
                 elif mt == "MEDIA_DATA_MESSAGE":
                     # data chunk: <POS StartPos DataLen/> + \x00\x00\x00\x00 + data
                     m2 = re.search(rb'DataLen="(\d+)"', body)

@@ -368,6 +368,39 @@ class AnjoyCommClient:
         backup). Convenience wrapper over :meth:`download_file`."""
         return self.download_file(remote_path)
 
+    # -- config section set (SYSTEM_CONFIG_SET_MESSAGE) ----------------------
+    def set_config_section(self, code, body: str, *, confirm: bool = False):
+        """Write one device config section via ``SYSTEM_CONFIG_SET_MESSAGE``.
+
+        Captured from AjDevTools' per-feature batch buttons (e.g. "Batch Set
+        Title") against a live MTF45-4G_AF: the tool sends
+        ``SYSTEM_CONFIG_SET_MESSAGE`` with the section's numeric ``Msg_code`` and
+        the section element as *body*, and the device replies with the **same
+        type+code and an empty body** to acknowledge. A *partial* section is
+        accepted — the device merges it into the stored config, so you may send
+        only the attributes you want to change.
+
+        The write is applied **asynchronously**: the ack returns at once but the
+        change reaches ``/mnt/nand/config.xml`` (and :meth:`get_config`) a moment
+        later, so pause briefly before reading it back to confirm.
+
+        Reads use the full-config download (:meth:`get_config`) — the device's
+        per-section GET is not what the vendor tool uses. Writes to the device,
+        so guarded by ``confirm=True``. *code* is a section code (see
+        ``anjoy.const`` ``CFG_*``, e.g. :data:`~anjoy.const.CFG_OVERLAY`);
+        *body* is the section XML. Returns the device's ack frame.
+        """
+        if not confirm:
+            raise AnjoyError("set_config_section writes device config; pass confirm=True")
+        code = str(code)
+        try:
+            str(body).encode("gb2312")          # the wire encoding — no lossy '?'
+        except UnicodeEncodeError as e:
+            raise AnjoyError(f"config body is not GB2312-encodable: {body!r}") from e
+        self._send("SYSTEM_CONFIG_SET_MESSAGE", code, body)
+        self.sock.settimeout(self.timeout)
+        return self._recv_until("SYSTEM_CONFIG_SET_MESSAGE", code)
+
     def snapshot(self, stream: int = 0, quality: int = 100) -> bytes:
         """Capture a JPEG snapshot and return its bytes. Captured from AjDevTools
         "Batch Snap Picture" and verified live.
