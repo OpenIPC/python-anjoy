@@ -135,7 +135,7 @@ class AnjoyCommClient:
         xml = build_envelope(msg_type, msg_code, body, self.sessionid, channel)
         self.sock.sendall(build_frame(xml))
 
-    def recv_frame(self) -> tuple[str, bytes]:
+    def recv_frame(self, strip_null: bool = True) -> tuple[str, bytes]:
         """Read one framed message; return (msg_type, raw_xml_bytes)."""
         # Resumable across read timeouts: a partial header stays in ``_buf`` and
         # continues on the next call; once the header is parsed its length is
@@ -153,7 +153,10 @@ class AnjoyCommClient:
         self._pending_len = None
         # The device NULL-terminates its frames (the length counts the trailing
         # \x00); strip it or ElementTree rejects "junk after document element".
-        xml = xml.rstrip(b"\x00")
+        # File-download data frames carry raw bytes after the envelope, so their
+        # reader passes strip_null=False to keep trailing NULs intact.
+        if strip_null:
+            xml = xml.rstrip(b"\x00")
         mt = ""
         try:
             root = ET.fromstring(xml.decode("gb2312", "replace"))
@@ -317,6 +320,46 @@ class AnjoyCommClient:
                 "(or call upload_file directly to just store a file).")
         content = _exec_body(commands).encode("gb2312")
         return self.upload_file(content, remote_name, file_type=0, confirm=True)
+
+    # -- file download (SYSTEM_CONTROL/1023 + MEDIA_DATA/2 chunks) -----------
+    def download_file(self, remote_path: str) -> bytes:
+        """Download a file from the camera. Captured from AjDevTools "Batch
+        Download Config" and verified on a live MTF45-4G_AF.
+
+        Announce ``SYSTEM_CONTROL_MESSAGE``/``1023`` with
+        ``<REQUEST_PARAM FileName="…" StartPos="0"/>``; the device replies
+        ``<RESPONSE_PARAM Port="8091" Type="1" FileLength="N"/>`` then streams
+        ``MEDIA_DATA_MESSAGE``/``2`` chunks (``<POS … DataLen="L"/>`` + a 4-byte
+        separator + L bytes) ending with ``DataLen="0"``. Read-only.
+        """
+        try:
+            str(remote_path).encode("gb2312")            # no lossy '?' in the path
+        except UnicodeEncodeError as e:
+            raise AnjoyError(f"remote_path is not GB2312-encodable: {remote_path!r}") from e
+        ann = f'<REQUEST_PARAM FileName="{_attr(remote_path)}" StartPos="0" />'
+        self._send("SYSTEM_CONTROL_MESSAGE", "1023", ann)
+        self.sock.settimeout(self.timeout)
+        _, resp = self._recv_until("SYSTEM_CONTROL_MESSAGE", "1023")
+        m = re.search(rb'FileLength="(\d+)"', resp)
+        total = int(m.group(1)) if m else None
+        out = bytearray()
+        while True:                                       # read until the DataLen=0 EOF
+            mt, payload = self.recv_frame(strip_null=False)
+            if mt != "MEDIA_DATA_MESSAGE":
+                continue
+            dm = re.search(rb'DataLen="(\d+)"', payload)
+            dlen = int(dm.group(1)) if dm else 0
+            if dlen == 0:
+                break
+            out += payload[-dlen:]                        # exact raw trailing bytes
+        if total is not None and len(out) != total:
+            raise AnjoyError(f"incomplete download: got {len(out)} of {total} bytes")
+        return bytes(out)
+
+    def get_config(self, remote_path: str = const.CONFIG_PATH) -> bytes:
+        """Download the device's full ``<IPCConfig>`` config XML (the config
+        backup). Convenience wrapper over :meth:`download_file`."""
+        return self.download_file(remote_path)
 
     def build_exec_frame(self, *commands: str) -> bytes:
         """Build (without sending) the framed ``EXECUTE_USER_CMD`` **file bytes**

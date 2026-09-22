@@ -293,5 +293,60 @@ class TestExecUserCmd(unittest.TestCase):
             c.exec_cmd("true", remote_name="whatever.xml", confirm=True)
 
 
+class TestDownload(unittest.TestCase):
+    def test_download_file_reassembles(self):
+        with FakeCommServer() as srv:
+            srv.download_content = b"<IPCConfig>hello-config-payload</IPCConfig>"
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            data = c.download_file("/mnt/nand/config.xml")
+            c.close()
+        self.assertEqual(data, b"<IPCConfig>hello-config-payload</IPCConfig>")
+
+    def test_get_config_uses_config_path(self):
+        from anjoy import const
+        with FakeCommServer() as srv:
+            srv.download_content = b"<IPCConfig/>"
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            self.assertEqual(c.get_config(), b"<IPCConfig/>")
+            c.close()
+        # the request named the on-device config path
+        self.assertTrue(any(const.CONFIG_PATH.encode() in b for _, b in srv.received))
+
+
+    def test_download_preserves_trailing_bytes(self):
+        with FakeCommServer() as srv:
+            srv.download_content = b"\x89PNGbinary\x00\x00\x00"
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            data = c.download_file("/mnt/nand/x.bin")
+            c.close()
+        self.assertEqual(data, b"\x89PNGbinary\x00\x00\x00")
+
+    def test_download_rejects_non_gb2312_path(self):
+        from anjoy.exceptions import AnjoyError
+        c = AnjoyCommClient("x"); c.sock = _FakeSock()
+        with self.assertRaises(AnjoyError):
+            c.download_file("/mnt/\U0001F4C1.xml")
+
+    def test_download_incomplete_raises(self):
+        from anjoy.exceptions import AnjoyError
+        from anjoy.comm import MAGIC
+        resp = build_envelope("SYSTEM_CONTROL_MESSAGE", "1023",
+                              '<RESPONSE_PARAM Port="8091" Type="1" FileLength="100" />')
+        env = ('<?xml version="1.0" encoding="GB2312" ?>\n<XML_TOPSEE>\n'
+               '<MESSAGE_HEADER Msg_type="MEDIA_DATA_MESSAGE" Msg_code="2" Msg_flag="0" />\n'
+               '<MESSAGE_BODY>\n<POS FileStartPos="0" StartPos="0" DataLen="10" />\n'
+               '</MESSAGE_BODY>\n</XML_TOPSEE>').encode("gb2312")
+        data_frame = MAGIC + struct.pack("<I", len(env)+4+10) + env + b"\x00\x00\x00\x00" + b"0123456789"
+        eof_env = env.replace(b'DataLen="10"', b'DataLen="0"')
+        eof = MAGIC + struct.pack("<I", len(eof_env)) + eof_env
+        inbound = (MAGIC + struct.pack("<I", len(resp)) + resp) + data_frame + eof
+        c = AnjoyCommClient("x"); c.sock = _FakeSock(inbound); c.sessionid = "S"
+        with self.assertRaises(AnjoyError):
+            c.download_file("/mnt/nand/config.xml")
+
+
 if __name__ == "__main__":
     unittest.main()

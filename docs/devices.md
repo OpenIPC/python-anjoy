@@ -81,6 +81,23 @@ MTF45-4G_AF. The file-upload transport is:
 implements this and is **verified end-to-end** (the live device returns the 1001
 success ack).
 
+#### File download / config backup (`SYSTEM_CONTROL`/1023 + `MEDIA_DATA`/2)
+The reverse of upload. Captured from AjDevTools "Batch Download Config" and
+verified live.
+
+1. **Request** — `SYSTEM_CONTROL_MESSAGE`/`1023`, body
+   `<REQUEST_PARAM FileName="/mnt/nand/config.xml" StartPos="0"/>`. The device
+   replies `SYSTEM_CONTROL_MESSAGE`/`1023` with
+   `<RESPONSE_PARAM Port="8091" Type="1" FileLength="N"/>`.
+2. **Data** — `MEDIA_DATA_MESSAGE`/**`2`** frames (download uses code 2; upload
+   used 1), body `<POS FileStartPos StartPos DataLen="L"/>` + a 4-byte separator
+   + `L` bytes, chunked (~16 KB), ending with `DataLen="0"`.
+
+`AnjoyCommClient.download_file(remote_path)` implements this; `get_config()`
+downloads `/mnt/nand/config.xml` — the full `<IPCConfig>` tree (PTZ, encode,
+users, network, OSD, alarms…). Verified: 26886-byte config downloaded from an
+MTF45-4G_AF. Read-only.
+
 `EXECUTE_USER_CMD` (remote shell) — **CONFIRMED executing on hardware.**
 `exec_cmd(*cmds, confirm=True)` builds `<EXECUTE_USER_CMD><CMD DATA="…"/>…>`
 (escaped, GB2312-validated) and uploads it. Execution is gated on the **upload
