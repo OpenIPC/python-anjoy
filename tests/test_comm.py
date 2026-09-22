@@ -263,6 +263,30 @@ class TestExecUserCmd(unittest.TestCase):
         # the announce named the file-upload control message
         self.assertIn("SYSTEM_CONTROL_MESSAGE", [t for t, _ in srv.received])
 
+    def test_upload_rejects_nonpositive_chunk(self):
+        c = AnjoyCommClient("x"); c.sock = _FakeSock()
+        with self.assertRaises(ValueError):
+            c.upload_file(b"data", chunk_size=0, confirm=True)
+
+    def test_upload_rejects_non_gb2312_path(self):
+        from anjoy.exceptions import AnjoyError
+        c = AnjoyCommClient("x"); c.sock = _FakeSock()
+        with self.assertRaises(AnjoyError):
+            c.upload_file(b"data", "\U0001F4C1.xml", confirm=True)
+
+    def test_upload_raises_on_timeout(self):
+        import socket as _s
+        from anjoy.exceptions import AnjoyError
+        class TimeoutSock:
+            def __init__(self): self.sent = b""
+            def sendall(self, b): self.sent += b
+            def recv(self, n): raise _s.timeout("no ready ack")
+            def settimeout(self, t): pass
+            def close(self): pass
+        c = AnjoyCommClient("x"); c.sock = TimeoutSock(); c.sessionid = "S"
+        with self.assertRaises(AnjoyError):
+            c.upload_file(b"data", confirm=True)
+
 
 if __name__ == "__main__":
     unittest.main()

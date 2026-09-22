@@ -239,31 +239,44 @@ class AnjoyCommClient:
         """
         if not confirm:
             raise AnjoyError("upload_file writes a file to the camera; pass confirm=True")
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be positive")
         if isinstance(content, str):
             content = content.encode("gb2312")
+        try:
+            str(remote_path).encode("gb2312")          # no lossy '?' in the path
+        except UnicodeEncodeError as e:
+            raise AnjoyError(f"remote_path is not GB2312-encodable: {remote_path!r}") from e
         n = len(content)
         announce = (f'<REQUEST_PARAM FileType="{int(file_type)}" '
                     f'FilePath="{_attr(remote_path)}" FileLength="{n}" />')
         self._send("SYSTEM_CONTROL_MESSAGE", "1022", announce)
         self.sock.settimeout(self.timeout)
-        self._recv_until("SYSTEM_CONTROL_MESSAGE")     # device: RESPONSE_PARAM ready
-        pos = 0
-        while pos < n:
-            piece = content[pos:pos + chunk_size]
-            self.sock.sendall(self._media_data_frame(pos, piece))
-            pos += len(piece)
-        self.sock.sendall(self._media_data_frame(n, b""))   # EOF
         try:
-            return self._recv_until("SYSTEM_CONTROL_MESSAGE")
-        except socket.timeout:
-            return ("", b"")
+            self._recv_until("SYSTEM_CONTROL_MESSAGE", "1022")   # device ready
+            pos = 0
+            while pos < n:
+                piece = content[pos:pos + chunk_size]
+                self.sock.sendall(self._media_data_frame(pos, piece))
+                pos += len(piece)
+            self.sock.sendall(self._media_data_frame(n, b""))    # EOF
+            return self._recv_until("SYSTEM_CONTROL_MESSAGE", "1001")  # success
+        except socket.timeout as e:
+            raise AnjoyError("timed out during file upload; outcome uncertain") from e
 
-    def _recv_until(self, msg_type: str, limit: int = 32):
+    def _recv_until(self, msg_type: str, msg_code: str | None = None,
+                    limit: int = 32):
         for _ in range(limit):
             mt, xml = self.recv_frame()
-            if mt == msg_type:
+            if mt != msg_type:
+                continue
+            if msg_code is None:
                 return mt, xml
-        raise AnjoyError(f"no {msg_type} received")
+            m = re.search(rb'Msg_code="([^"]+)"', xml)
+            if m and m.group(1).decode("ascii", "replace") == msg_code:
+                return mt, xml
+        want = msg_type + (f"/{msg_code}" if msg_code else "")
+        raise AnjoyError(f"no {want} received")
 
     # -- EXECUTE_USER_CMD (remote shell) — delivered as a config file ---------
     def exec_cmd(self, *commands: str, remote_path: str = "ptzClear.xml",
