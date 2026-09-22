@@ -159,6 +159,7 @@ CFG_MISC = "227"         # SystemConfig/MiscConfig — device language
 CFG_MOTION = "822"       # AlarmConfig/MotionDetectAlarm — motion detection
 CFG_PERSON_DETECT = "829"  # AlarmConfig/VideoPD — AI person detection
 CFG_FACE_DETECT = "832"    # AlarmConfig/FaceDetect — AI face detection
+CFG_USER = "223"         # SystemConfig/UserConfig — user accounts / passwords
 
 # -- error codes ------------------------------------------------------------
 ANJOY_ERRORS = {
