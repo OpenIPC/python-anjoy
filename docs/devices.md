@@ -155,6 +155,14 @@ Typed wrappers over the primitive:
 * `set_language(language, confirm=True)` — code 227 (`"zh_cn"`, `"en"`, …).
 * `set_motion(enable, sensitivity=None, alarm_threshold=None, confirm=True)` —
   code 822, read-modify-write of `<MotionDetectAlarm>` (grid/schedule/actions kept).
+* `set_person_detect(enable, sensitivity=None, confirm=True)` — code **829**,
+  RMW of `<VideoPD>` (AI person detection); verified live (Enable 1↔0).
+* `set_face_detect(enable, sensitivity=None, confirm=True)` — code **832**,
+  RMW of `<FaceDetect>` (AI face detection); verified live (Enable 0↔1).
+
+The alarm/AI toggles share a `_rmw_section(tag, code, attrs)` helper that
+downloads the section, overwrites the named attributes, and writes it back —
+preserving every other attribute and child element.
 
 Both verified live with a set-then-restore round-trip. Config attributes are read
 back from the full-config download, which formats each attribute on its own line —
