@@ -88,3 +88,90 @@ class FakeAnjoyHTTPServer:
     def __exit__(self, *exc):
         self._httpd.shutdown()
         self._httpd.server_close()
+
+
+class FakeCommServer:
+    """Threaded loopback server mimicking Anjoy's comm_server (TCP 8091).
+
+    Speaks the 58 91 58 51 + LE-length + GB2312-XML framing, answers USER_AUTH
+    with a session id, echoes PTZ frames, and — like the real device —
+    NULL-terminates its response frames.
+    """
+
+    MAGIC = b"\x58\x91\x58\x51"
+
+    def __init__(self, sessionid="20260101000000_deadbeefdeadbeef"):
+        import socket
+        self.sessionid = sessionid
+        self.received = []           # list of (msg_type, body_xml_bytes)
+        self.srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.srv.bind(("127.0.0.1", 0))
+        self.srv.listen(1)
+        self.port = self.srv.getsockname()[1]
+        self._thread = None
+
+    @staticmethod
+    def _frame(xml_bytes, null_term=True):
+        import struct
+        body = xml_bytes + (b"\x00" if null_term else b"")
+        return FakeCommServer.MAGIC + struct.pack("<I", len(body)) + body
+
+    def _read_frame(self, conn):
+        import struct
+        hdr = b""
+        while len(hdr) < 8:
+            c = conn.recv(8 - len(hdr))
+            if not c:
+                raise EOFError
+            hdr += c
+        assert hdr[:4] == self.MAGIC
+        ln = struct.unpack("<I", hdr[4:8])[0]
+        body = b""
+        while len(body) < ln:
+            c = conn.recv(ln - len(body))
+            if not c:
+                raise EOFError
+            body += c
+        return body
+
+    def __enter__(self):
+        import threading
+        self._thread = threading.Thread(target=self._serve, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        try:
+            self.srv.close()
+        except Exception:
+            pass
+
+    def _serve(self):
+        import re
+        try:
+            conn, _ = self.srv.accept()
+        except OSError:
+            return
+        with conn:
+            while True:
+                try:
+                    body = self._read_frame(conn)
+                except (EOFError, OSError):
+                    break
+                mt = ""
+                m = re.search(rb'Msg_type="([^"]+)"', body)
+                if m:
+                    mt = m.group(1).decode()
+                self.received.append((mt, body))
+                if mt == "USER_AUTH_MESSAGE":
+                    resp = (
+                        '<?xml version="1.0" encoding="GB2312" ?>\n<XML_TOPSEE>\n'
+                        '<MESSAGE_HEADER\nMsg_type="USER_AUTH_MESSAGE"\n'
+                        'Msg_code="CMD_USER_AUTH"\nMsg_flag="0"\n/>\n<MESSAGE_BODY>\n'
+                        f'<USER_AUTH_RESPONSE\nSessionid="{self.sessionid}"\n'
+                        'Group="Administrator" myversion="1" \n/>\n'
+                        '</MESSAGE_BODY>\n</XML_TOPSEE>').encode("gb2312")
+                    conn.sendall(self._frame(resp))          # null-terminated
+                elif mt == "PTZ_CONTROL_MESSAGE":
+                    conn.sendall(self._frame(body))          # echo the frame back
