@@ -397,6 +397,17 @@ class TestDownload(unittest.TestCase):
         self.assertIn(b'Msg_code="525"', c.sock.sent)
         self.assertIn(b'<TitleOverlay TitleUtf8="54657374"/>', c.sock.sent)
 
+    def test_set_config_section_rejects_nonempty_ack(self):
+        # same type+code but a payload body = error/status, not a success ack
+        from anjoy.comm import MAGIC
+        from anjoy.exceptions import AnjoyError
+        bad = build_envelope("SYSTEM_CONFIG_SET_MESSAGE", "525",
+                             '<RESPONSE_PARAM Error="1" />')
+        inbound = MAGIC + struct.pack("<I", len(bad)) + bad
+        c = AnjoyCommClient("x"); c.sock = _FakeSock(inbound); c.sessionid = "S"
+        with self.assertRaises(AnjoyError):
+            c.set_config_section("525", "<Overlay/>", confirm=True)
+
     def test_set_config_section_requires_confirm(self):
         from anjoy.exceptions import AnjoyError
         c = AnjoyCommClient("x"); c.sock = _FakeSock()

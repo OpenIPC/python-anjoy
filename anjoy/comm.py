@@ -82,6 +82,15 @@ def build_frame(xml: bytes) -> bytes:
     return MAGIC + struct.pack("<I", len(xml)) + xml
 
 
+def _message_body(xml: bytes) -> bytes:
+    """Return the inner bytes of ``<MESSAGE_BODY>`` (``b""`` when empty or
+    self-closing). Used to tell a bare ack from an error/status payload."""
+    if re.search(rb"<MESSAGE_BODY\s*/>", xml):
+        return b""
+    m = re.search(rb"<MESSAGE_BODY>(.*?)</MESSAGE_BODY>", xml, re.S)
+    return m.group(1).strip() if m else b""
+
+
 class AnjoyCommClient:
     """A single ``comm_server`` (TCP 8091) connection: framing + plaintext auth."""
 
@@ -399,7 +408,15 @@ class AnjoyCommClient:
             raise AnjoyError(f"config body is not GB2312-encodable: {body!r}") from e
         self._send("SYSTEM_CONFIG_SET_MESSAGE", code, body)
         self.sock.settimeout(self.timeout)
-        return self._recv_until("SYSTEM_CONFIG_SET_MESSAGE", code)
+        mt, xml = self._recv_until("SYSTEM_CONFIG_SET_MESSAGE", code)
+        # Success is the same type+code with an EMPTY body; a matching frame that
+        # carries a payload is an error/status, not an ack — don't report success.
+        payload = _message_body(xml)
+        if payload:
+            raise AnjoyError(
+                f"config set (code {code}) not acknowledged: "
+                f"{payload[:200].decode('gb2312', 'replace')}")
+        return mt, xml
 
     def snapshot(self, stream: int = 0, quality: int = 100) -> bytes:
         """Capture a JPEG snapshot and return its bytes. Captured from AjDevTools
