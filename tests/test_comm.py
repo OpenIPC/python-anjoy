@@ -517,5 +517,57 @@ class TestDownload(unittest.TestCase):
             c.close()
 
 
+    def test_set_language_frame(self):
+        from anjoy.comm import MAGIC
+        ack = build_envelope("SYSTEM_CONFIG_SET_MESSAGE", "227")
+        c = AnjoyCommClient("x"); c.sessionid = "S"
+        c.sock = _FakeSock(MAGIC + struct.pack("<I", len(ack)) + ack)
+        c.set_language("en", confirm=True)
+        self.assertIn(b'Msg_code="227"', c.sock.sent)
+        self.assertIn(b'<MiscConfig Language="en" />', c.sock.sent)
+
+    def test_set_language_requires_confirm(self):
+        from anjoy.exceptions import AnjoyError
+        c = AnjoyCommClient("x"); c.sock = _FakeSock()
+        with self.assertRaises(AnjoyError):
+            c.set_language("en")
+
+    def test_set_motion_roundtrip_preserves_children(self):
+        cfg = (b'<IPCConfig><AlarmConfig>'
+               b'<MotionDetectAlarm Enable="0" Sensitivity="80" AlarmThreshold="20">'
+               b'<EnableTimeList><Workday Day="7"><TimeSpan StartTime="0" EndTime="24" />'
+               b'</Workday></EnableTimeList>'
+               b'<AlarmAction><AlarmOutputAction Enable="1" /></AlarmAction>'
+               b'</MotionDetectAlarm></AlarmConfig></IPCConfig>')
+        with FakeCommServer() as srv:
+            srv.download_content = cfg
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            c.set_motion(True, sensitivity=50, confirm=True)
+            c.close()
+        code, sect = srv.config_sets[0]
+        self.assertEqual(code, "822")
+        self.assertIn(b'Enable="1"', sect)
+        self.assertIn(b'Sensitivity="50"', sect)
+        self.assertIn(b"AlarmAction", sect)          # children preserved
+        self.assertIn(b"EnableTimeList", sect)
+
+    def test_set_motion_requires_confirm(self):
+        from anjoy.exceptions import AnjoyError
+        c = AnjoyCommClient("x"); c.sock = _FakeSock()
+        with self.assertRaises(AnjoyError):
+            c.set_motion(True)
+
+    def test_set_motion_no_section_raises(self):
+        from anjoy.exceptions import AnjoyError
+        with FakeCommServer() as srv:
+            srv.download_content = b'<IPCConfig><SystemConfig/></IPCConfig>'
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            with self.assertRaises(AnjoyError):
+                c.set_motion(True, confirm=True)
+            c.close()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -465,6 +465,47 @@ class AnjoyCommClient:
                 f'Day="{int(day)}" Time="{_attr(time)}" />')
         return self.set_config_section(const.CFG_MAINTAIN, body, confirm=True)
 
+    def set_language(self, language: str, *, confirm: bool = False):
+        """Set the device language (``SystemConfig/MiscConfig``, code 227).
+        *language* is a device language code, e.g. ``"zh_cn"`` or ``"en"``
+        (others seen in the vendor tool: ``ko-ko``, ``ru``/``russian``, ``pl-pl``,
+        ``zh-tw``). Verified live on MTF45-4G_AF (``zh_cn`` ↔ ``en``). Writes —
+        ``confirm=True``.
+        """
+        if not confirm:
+            raise AnjoyError("set_language writes device config; pass confirm=True")
+        body = f'<MiscConfig Language="{_attr(language)}" />'
+        return self.set_config_section(const.CFG_MISC, body, confirm=True)
+
+    def set_motion(self, enable: bool, *, sensitivity: int | None = None,
+                   alarm_threshold: int | None = None, confirm: bool = False):
+        """Enable/disable and tune motion detection
+        (``AlarmConfig/MotionDetectAlarm``, code 822).
+
+        Read-modify-write: the current ``<MotionDetectAlarm>`` is downloaded and
+        only the given fields change, so the detection grid (``BlockConfig``),
+        day/night thresholds, arming schedule and alarm actions are preserved.
+        *enable* toggles detection; *sensitivity* and *alarm_threshold* (ints)
+        are optional. Verified live on MTF45-4G_AF (Enable 0↔1). Writes —
+        ``confirm=True``.
+        """
+        if not confirm:
+            raise AnjoyError("set_motion writes device config; pass confirm=True")
+        cfg = self.get_config()
+        m = re.search(rb"<MotionDetectAlarm\b.*?</MotionDetectAlarm>", cfg, re.S)
+        if m is None:
+            m = re.search(rb"<MotionDetectAlarm\b[^>]*/>", cfg)   # self-closing form
+        if m is None:
+            raise AnjoyError("device config has no <MotionDetectAlarm> section")
+        root = ET.fromstring(m.group(0).decode("gb2312", "replace"))
+        root.set("Enable", "1" if enable else "0")
+        if sensitivity is not None:
+            root.set("Sensitivity", str(int(sensitivity)))
+        if alarm_threshold is not None:
+            root.set("AlarmThreshold", str(int(alarm_threshold)))
+        body = ET.tostring(root, encoding="unicode")
+        return self.set_config_section(const.CFG_MOTION, body, confirm=True)
+
     def snapshot(self, stream: int = 0, quality: int = 100) -> bytes:
         """Capture a JPEG snapshot and return its bytes. Captured from AjDevTools
         "Batch Snap Picture" and verified live.
