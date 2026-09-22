@@ -348,5 +348,26 @@ class TestDownload(unittest.TestCase):
             c.download_file("/mnt/nand/config.xml")
 
 
+    def test_snapshot_triggers_and_downloads(self):
+        with FakeCommServer() as srv:
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            jpg = c.snapshot(stream=0, quality=90)
+            c.close()
+        self.assertEqual(jpg, b"\xff\xd8\xffFAKEJPEG\xff\xd9")
+        types = [t for t, _ in srv.received]
+        self.assertIn("SYSTEM_CONTROL_MESSAGE", types)   # 1043 trigger + 1023 download
+
+    def test_snapshot_no_jpgfile_raises(self):
+        from anjoy.exceptions import AnjoyError
+        from anjoy.comm import MAGIC
+        resp = build_envelope("SYSTEM_CONTROL_MESSAGE", "1043",
+                              "<RESPONSE_PARAM></RESPONSE_PARAM>")
+        inbound = MAGIC + struct.pack("<I", len(resp)) + resp
+        c = AnjoyCommClient("x"); c.sock = _FakeSock(inbound); c.sessionid = "S"
+        with self.assertRaises(AnjoyError):
+            c.snapshot()
+
+
 if __name__ == "__main__":
     unittest.main()

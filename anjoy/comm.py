@@ -361,6 +361,26 @@ class AnjoyCommClient:
         backup). Convenience wrapper over :meth:`download_file`."""
         return self.download_file(remote_path)
 
+    def snapshot(self, stream: int = 0, quality: int = 100) -> bytes:
+        """Capture a JPEG snapshot and return its bytes. Captured from AjDevTools
+        "Batch Snap Picture" and verified live.
+
+        Trigger ``SYSTEM_CONTROL_MESSAGE``/``1043`` with
+        ``<REQUEST_PARAM Stream="S" Quality="Q"/>``; the device saves a JPEG under
+        ``/tmp`` and replies ``<RESPONSE_PARAM>JpgFile="…"</RESPONSE_PARAM>``, which
+        is then fetched with :meth:`download_file`. *stream* 0=main, 1=sub;
+        *quality* 1-100. Read-only.
+        """
+        body = f'<REQUEST_PARAM Stream="{int(stream)}" Quality="{int(quality)}"/>'
+        self._send("SYSTEM_CONTROL_MESSAGE", "1043", body)
+        self.sock.settimeout(self.timeout)
+        _, resp = self._recv_until("SYSTEM_CONTROL_MESSAGE", "1043")
+        m = re.search(rb'JpgFile="([^"]+)"', resp)
+        if not m:
+            raise AnjoyError("snapshot: device returned no JpgFile")
+        name = m.group(1).decode("ascii", "replace")
+        return self.download_file("/tmp/" + name)
+
     def build_exec_frame(self, *commands: str) -> bytes:
         """Build (without sending) the framed ``EXECUTE_USER_CMD`` **file bytes**
         wrapped in a single MEDIA_DATA data frame — for tests and inspection."""
