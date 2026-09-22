@@ -377,5 +377,13 @@ class TestDownload(unittest.TestCase):
             c.snapshot(quality=0)
 
 
+    def test_reboot_sends_1007(self):
+        c = AnjoyCommClient("x"); c.sock = _FakeSock(); c.sessionid = "S"
+        c.reboot()
+        self.assertIn(b'Msg_type="SYSTEM_CONTROL_MESSAGE"', c.sock.sent)
+        self.assertIn(b'Msg_code="1007"', c.sock.sent)
+        self.assertIn(b"<MESSAGE_BODY/>", c.sock.sent)   # empty body
+
+
 if __name__ == "__main__":
     unittest.main()

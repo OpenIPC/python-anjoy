@@ -98,6 +98,11 @@ downloads `/mnt/nand/config.xml` — the full `<IPCConfig>` tree (PTZ, encode,
 users, network, OSD, alarms…). Verified: 26886-byte config downloaded from an
 MTF45-4G_AF. Read-only.
 
+#### Reboot (`SYSTEM_CONTROL`/1007)
+Captured from AjDevTools "Batch Reboot": a `SYSTEM_CONTROL_MESSAGE`/`1007` with an
+empty body reboots the camera. `AnjoyCommClient.reboot()` implements it
+(fire-and-forget; the connection drops, reconnect after ~30 s). Verified live.
+
 #### Snapshot (`SYSTEM_CONTROL`/1043 + download)
 Captured from AjDevTools "Batch Snap Picture". Trigger
 `SYSTEM_CONTROL_MESSAGE`/`1043` with `<REQUEST_PARAM Stream="S" Quality="Q"/>`;
