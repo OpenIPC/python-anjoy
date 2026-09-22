@@ -98,6 +98,35 @@ downloads `/mnt/nand/config.xml` — the full `<IPCConfig>` tree (PTZ, encode,
 users, network, OSD, alarms…). Verified: 26886-byte config downloaded from an
 MTF45-4G_AF. Read-only.
 
+#### Config section write (`SYSTEM_CONFIG_SET_MESSAGE`)
+Captured from AjDevTools' per-feature batch buttons (e.g. "Batch Set Title"). The
+tool writes **one config section at a time**: `SYSTEM_CONFIG_SET_MESSAGE` carries
+the section's numeric `Msg_code` and the section element as the body, and the
+device replies with the **same type+code and an empty body** to acknowledge. A
+*partial* section is accepted — the device merges it into the stored config.
+
+The write is applied **asynchronously**: the ack returns at once but the change
+reaches `/mnt/nand/config.xml` (and `get_config`) a moment later, so pause briefly
+before reading it back. Reads use the full-config download (`get_config`) — the
+device's per-section GET is not what the vendor tool uses (and returned an empty
+body to every request form tried, so it is not relied on).
+
+Confirmed code: **`525` = `MediaConfig/Video/Overlay`** (OSD title + timestamp).
+Captured body (title is hex-ASCII, `43616d657261` = "Camera"):
+
+```
+SYSTEM_CONFIG_SET_MESSAGE / 525
+<Overlay Enable="1" Transparency="0" Style="3" Fontsize="0" Week="1" >
+  <TimeOverlay PosX="1" PosY="1" Format="yyyy-mm-dd hh:mm:ss" />
+  <TitleOverlay PosX="0" PosY="0" TitleUtf8="43616d657261"/>
+</Overlay>
+```
+
+`AnjoyCommClient.set_config_section(code, body, confirm=True)` implements this
+(codes in `anjoy.const` `CFG_*`). Verified live on MTF45-4G_AF: setting the OSD
+title to "Test" then back to "Camera" via code 525 changed and restored
+`TitleUtf8` in the downloaded config (asynchronously). Write — `confirm=True`.
+
 #### Reboot (`SYSTEM_CONTROL`/1007)
 Captured from AjDevTools "Batch Reboot": a `SYSTEM_CONTROL_MESSAGE`/`1007` with an
 empty body reboots the camera. `AnjoyCommClient.reboot()` implements it

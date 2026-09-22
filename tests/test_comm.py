@@ -385,5 +385,57 @@ class TestDownload(unittest.TestCase):
         self.assertIn(b"<MESSAGE_BODY/>", c.sock.sent)   # empty body
 
 
+    def test_set_config_section_frame_and_ack(self):
+        from anjoy.comm import MAGIC
+        from anjoy import const
+        body = '<Overlay Enable="1"><TitleOverlay TitleUtf8="54657374"/></Overlay>'
+        ack = build_envelope("SYSTEM_CONFIG_SET_MESSAGE", const.CFG_OVERLAY)   # empty body = ack
+        inbound = MAGIC + struct.pack("<I", len(ack)) + ack
+        c = AnjoyCommClient("x"); c.sock = _FakeSock(inbound); c.sessionid = "S"
+        c.set_config_section(const.CFG_OVERLAY, body, confirm=True)
+        self.assertIn(b'Msg_type="SYSTEM_CONFIG_SET_MESSAGE"', c.sock.sent)
+        self.assertIn(b'Msg_code="525"', c.sock.sent)
+        self.assertIn(b'<TitleOverlay TitleUtf8="54657374"/>', c.sock.sent)
+
+    def test_set_config_section_rejects_nonempty_ack(self):
+        # same type+code but a payload body = error/status, not a success ack
+        from anjoy.comm import MAGIC
+        from anjoy.exceptions import AnjoyError
+        bad = build_envelope("SYSTEM_CONFIG_SET_MESSAGE", "525",
+                             '<RESPONSE_PARAM Error="1" />')
+        inbound = MAGIC + struct.pack("<I", len(bad)) + bad
+        c = AnjoyCommClient("x"); c.sock = _FakeSock(inbound); c.sessionid = "S"
+        with self.assertRaises(AnjoyError):
+            c.set_config_section("525", "<Overlay/>", confirm=True)
+
+    def test_set_config_section_requires_confirm(self):
+        from anjoy.exceptions import AnjoyError
+        c = AnjoyCommClient("x"); c.sock = _FakeSock()
+        with self.assertRaises(AnjoyError):
+            c.set_config_section("525", "<Overlay/>")
+        self.assertEqual(c.sock.sent, b"")               # nothing written to the camera
+
+    def test_set_config_section_rejects_non_gb2312(self):
+        from anjoy.exceptions import AnjoyError
+        c = AnjoyCommClient("x"); c.sock = _FakeSock()
+        with self.assertRaises(AnjoyError):
+            c.set_config_section("525", '<Overlay Title="\U0001F4C1"/>', confirm=True)
+
+    def test_set_config_section_roundtrip(self):
+        from anjoy import const
+        with FakeCommServer() as srv:
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            c.set_config_section(
+                const.CFG_OVERLAY,
+                '<Overlay><TitleOverlay TitleUtf8="54657374"/></Overlay>',
+                confirm=True)
+            c.close()
+        self.assertEqual(len(srv.config_sets), 1)
+        code, sect = srv.config_sets[0]
+        self.assertEqual(code, "525")
+        self.assertIn(b'TitleUtf8="54657374"', sect)
+
+
 if __name__ == "__main__":
     unittest.main()

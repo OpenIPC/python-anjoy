@@ -82,6 +82,15 @@ def build_frame(xml: bytes) -> bytes:
     return MAGIC + struct.pack("<I", len(xml)) + xml
 
 
+def _message_body(xml: bytes) -> bytes:
+    """Return the inner bytes of ``<MESSAGE_BODY>`` (``b""`` when empty or
+    self-closing). Used to tell a bare ack from an error/status payload."""
+    if re.search(rb"<MESSAGE_BODY\s*/>", xml):
+        return b""
+    m = re.search(rb"<MESSAGE_BODY>(.*?)</MESSAGE_BODY>", xml, re.S)
+    return m.group(1).strip() if m else b""
+
+
 class AnjoyCommClient:
     """A single ``comm_server`` (TCP 8091) connection: framing + plaintext auth."""
 
@@ -367,6 +376,47 @@ class AnjoyCommClient:
         """Download the device's full ``<IPCConfig>`` config XML (the config
         backup). Convenience wrapper over :meth:`download_file`."""
         return self.download_file(remote_path)
+
+    # -- config section set (SYSTEM_CONFIG_SET_MESSAGE) ----------------------
+    def set_config_section(self, code, body: str, *, confirm: bool = False):
+        """Write one device config section via ``SYSTEM_CONFIG_SET_MESSAGE``.
+
+        Captured from AjDevTools' per-feature batch buttons (e.g. "Batch Set
+        Title") against a live MTF45-4G_AF: the tool sends
+        ``SYSTEM_CONFIG_SET_MESSAGE`` with the section's numeric ``Msg_code`` and
+        the section element as *body*, and the device replies with the **same
+        type+code and an empty body** to acknowledge. A *partial* section is
+        accepted — the device merges it into the stored config, so you may send
+        only the attributes you want to change.
+
+        The write is applied **asynchronously**: the ack returns at once but the
+        change reaches ``/mnt/nand/config.xml`` (and :meth:`get_config`) a moment
+        later, so pause briefly before reading it back to confirm.
+
+        Reads use the full-config download (:meth:`get_config`) — the device's
+        per-section GET is not what the vendor tool uses. Writes to the device,
+        so guarded by ``confirm=True``. *code* is a section code (see
+        ``anjoy.const`` ``CFG_*``, e.g. :data:`~anjoy.const.CFG_OVERLAY`);
+        *body* is the section XML. Returns the device's ack frame.
+        """
+        if not confirm:
+            raise AnjoyError("set_config_section writes device config; pass confirm=True")
+        code = str(code)
+        try:
+            str(body).encode("gb2312")          # the wire encoding — no lossy '?'
+        except UnicodeEncodeError as e:
+            raise AnjoyError(f"config body is not GB2312-encodable: {body!r}") from e
+        self._send("SYSTEM_CONFIG_SET_MESSAGE", code, body)
+        self.sock.settimeout(self.timeout)
+        mt, xml = self._recv_until("SYSTEM_CONFIG_SET_MESSAGE", code)
+        # Success is the same type+code with an EMPTY body; a matching frame that
+        # carries a payload is an error/status, not an ack — don't report success.
+        payload = _message_body(xml)
+        if payload:
+            raise AnjoyError(
+                f"config set (code {code}) not acknowledged: "
+                f"{payload[:200].decode('gb2312', 'replace')}")
+        return mt, xml
 
     def snapshot(self, stream: int = 0, quality: int = 100) -> bytes:
         """Capture a JPEG snapshot and return its bytes. Captured from AjDevTools
