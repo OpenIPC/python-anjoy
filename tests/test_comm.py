@@ -345,7 +345,29 @@ class TestDownload(unittest.TestCase):
         inbound = (MAGIC + struct.pack("<I", len(resp)) + resp) + data_frame + eof
         c = AnjoyCommClient("x"); c.sock = _FakeSock(inbound); c.sessionid = "S"
         with self.assertRaises(AnjoyError):
-            c.download_file("/mnt/nand/config.xml")
+            c.download_file("/mnt/nand/config.xml", retries=0)
+
+    def test_download_retries_incomplete(self):
+        with FakeCommServer() as srv:
+            srv.truncate_downloads = 1
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            data = c.download_file("/mnt/nand/config.xml", retry_delay=0)
+            c.close()
+        self.assertEqual(data, srv.download_content)
+        self.assertEqual(srv.downloads, 2)                  # one truncated, one good
+
+    def test_download_gives_up_after_retries(self):
+        from anjoy.exceptions import AnjoyError
+        with FakeCommServer() as srv:
+            srv.truncate_downloads = 5
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            with self.assertRaises(AnjoyError) as cm:
+                c.download_file("/mnt/nand/config.xml", retries=2, retry_delay=0)
+            c.close()
+        self.assertIn("incomplete download", str(cm.exception))
+        self.assertEqual(srv.downloads, 3)                  # 1 try + 2 retries
 
 
     def test_snapshot_triggers_and_downloads(self):

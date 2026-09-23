@@ -29,6 +29,7 @@ from __future__ import annotations
 import socket
 import re
 import struct
+import time
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape as _xml_escape
 from typing import Iterator
@@ -44,6 +45,10 @@ MAX_FRAME = 16 * 1024 * 1024
 EXEC_TRIGGER_NAMES = ("defaultconfig.xml", "config.default.xml",
                       "default_2_priority.xml")
 _XML_DECL = '<?xml version="1.0" encoding="GB2312" ?>'
+
+
+class _IncompleteDownload(AnjoyError):
+    """Download ended (``DataLen=0``) short of ``FileLength`` — retryable."""
 
 
 def _attr(value) -> str:
@@ -338,7 +343,8 @@ class AnjoyCommClient:
         return self.upload_file(content, remote_name, file_type=0, confirm=True)
 
     # -- file download (SYSTEM_CONTROL/1023 + MEDIA_DATA/2 chunks) -----------
-    def download_file(self, remote_path: str) -> bytes:
+    def download_file(self, remote_path: str, *, retries: int = 2,
+                      retry_delay: float = 1.0) -> bytes:
         """Download a file from the camera. Captured from AjDevTools "Batch
         Download Config" and verified on a live MTF45-4G_AF.
 
@@ -347,7 +353,20 @@ class AnjoyCommClient:
         ``<RESPONSE_PARAM Port="8091" Type="1" FileLength="N"/>`` then streams
         ``MEDIA_DATA_MESSAGE``/``2`` chunks (``<POS … DataLen="L"/>`` + a 4-byte
         separator + L bytes) ending with ``DataLen="0"``. Read-only.
+
+        A transfer that ends cleanly but short of ``FileLength`` is retried up to
+        *retries* times, *retry_delay* seconds apart: seen live on MTF45-4G_AF
+        right after a LAN config write, while the device re-applies the network.
         """
+        for attempt in range(retries + 1):
+            try:
+                return self._download_once(remote_path)
+            except _IncompleteDownload as e:
+                if attempt == retries:
+                    raise AnjoyError(str(e)) from None
+                time.sleep(retry_delay)
+
+    def _download_once(self, remote_path: str) -> bytes:
         try:
             str(remote_path).encode("gb2312")            # no lossy '?' in the path
         except UnicodeEncodeError as e:
@@ -369,7 +388,7 @@ class AnjoyCommClient:
                 break
             out += payload[-dlen:]                        # exact raw trailing bytes
         if total is not None and len(out) != total:
-            raise AnjoyError(f"incomplete download: got {len(out)} of {total} bytes")
+            raise _IncompleteDownload(f"incomplete download: got {len(out)} of {total} bytes")
         return bytes(out)
 
     def get_config(self, remote_path: str = const.CONFIG_PATH) -> bytes:
