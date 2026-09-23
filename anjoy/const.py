@@ -160,6 +160,7 @@ CFG_MOTION = "822"       # AlarmConfig/MotionDetectAlarm — motion detection
 CFG_PERSON_DETECT = "829"  # AlarmConfig/VideoPD — AI person detection
 CFG_FACE_DETECT = "832"    # AlarmConfig/FaceDetect — AI face detection
 CFG_USER = "223"         # SystemConfig/UserConfig — user accounts / passwords
+CFG_LAN = "325"          # NetworkConfig/LANConfig — wired IP / DHCP
 
 # -- error codes ------------------------------------------------------------
 ANJOY_ERRORS = {

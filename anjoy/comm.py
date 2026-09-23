@@ -591,6 +591,41 @@ class AnjoyCommClient:
         if username == self.user:                # keep our own creds in sync
             self.password = password
 
+    # -- network ------------------------------------------------------------
+    def set_network(self, *, ip: str | None = None, netmask: str | None = None,
+                    gateway: str | None = None, dns1: str | None = None,
+                    dns2: str | None = None, dhcp: bool | None = None,
+                    hostname: str | None = None, mtu: int | None = None,
+                    confirm: bool = False):
+        """Set the wired network config (``NetworkConfig/LANConfig``, code 325).
+
+        Partial write: only the given fields are sent and the device merges them
+        into the stored section (``MacAddress`` and the rest are untouched). No
+        read-back, so back-to-back calls can't resend stale values while an
+        earlier async write is still landing. *dhcp* is a bool (DHCP on/off).
+        Verified live on MTF45-4G_AF (DNS2 change with the IP preserved;
+        DHCP↔static switch).
+
+        ⚠️ Changing ``ip``/``netmask``/``gateway`` or turning ``dhcp`` on can move
+        the camera to a **different address** — the current connection may drop and
+        you will have to reconnect at (or :func:`~anjoy.discovery.discover`) the new
+        IP. Guarded by ``confirm=True``.
+        """
+        if not confirm:
+            raise AnjoyError("set_network changes the camera address; pass confirm=True")
+        attrs = {
+            "DHCP": None if dhcp is None else (1 if dhcp else 0),
+            "IPAddress": ip, "Netmask": netmask, "Gateway": gateway,
+            "DNS1": dns1, "DNS2": dns2, "hostname": hostname,
+            "MTU": None if mtu is None else int(mtu),
+        }
+        attrs = {k: v for k, v in attrs.items() if v is not None}
+        if not attrs:
+            raise ValueError("set_network: no fields given")
+        body = "<LANConfig " + " ".join(
+            f'{k}="{_attr(str(v))}"' for k, v in attrs.items()) + " />"
+        return self.set_config_section(const.CFG_LAN, body, confirm=True)
+
     def snapshot(self, stream: int = 0, quality: int = 100) -> bytes:
         """Capture a JPEG snapshot and return its bytes. Captured from AjDevTools
         "Batch Snap Picture" and verified live.

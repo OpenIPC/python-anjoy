@@ -701,5 +701,53 @@ class TestDownload(unittest.TestCase):
         ET.fromstring(sect.decode("gb2312"))               # still well-formed XML
 
 
+    _LAN_CFG = (b'<IPCConfig><NetworkConfig>'
+                b'<LANConfig MacAddress="AA:BB" DHCP="0" IPAddress="10.0.0.5" '
+                b'Netmask="255.255.255.0" Gateway="10.0.0.1" DNS1="1.1.1.1" '
+                b'DNS2="8.8.8.8" hostname="cam" MTU="1500" />'
+                b'</NetworkConfig></IPCConfig>')
+
+    def test_set_network_sends_only_given_fields(self):
+        import xml.etree.ElementTree as ET
+        with FakeCommServer() as srv:
+            srv.download_content = self._LAN_CFG
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            c.set_network(ip="10.0.0.9", dhcp=True, dns2="9.9.9.9", confirm=True)
+            c.close()
+        code, sect = srv.config_sets[0]
+        self.assertEqual(code, "325")
+        root = ET.fromstring(sect.decode("gb2312"))
+        self.assertEqual(root.tag, "LANConfig")
+        self.assertEqual(root.attrib, {"IPAddress": "10.0.0.9", "DHCP": "1",
+                                       "DNS2": "9.9.9.9"})   # bool -> 1; nothing else
+
+    def test_set_network_consecutive_writes_dont_resend_stale(self):
+        import xml.etree.ElementTree as ET
+        # the device applies writes asynchronously, so the config download may
+        # still show pre-write values; a second call must not echo them back.
+        with FakeCommServer() as srv:
+            srv.download_content = self._LAN_CFG
+            c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
+            c.connect(); c.login()
+            c.set_network(dns1="1.0.0.1", confirm=True)
+            c.set_network(dns2="9.9.9.9", confirm=True)
+            c.close()
+        (_, first), (_, second) = srv.config_sets
+        self.assertEqual(ET.fromstring(first).attrib, {"DNS1": "1.0.0.1"})
+        self.assertEqual(ET.fromstring(second).attrib, {"DNS2": "9.9.9.9"})
+
+    def test_set_network_rejects_empty(self):
+        c = AnjoyCommClient("x"); c.sock = _FakeSock()
+        with self.assertRaises(ValueError):
+            c.set_network(confirm=True)
+
+    def test_set_network_requires_confirm(self):
+        from anjoy.exceptions import AnjoyError
+        c = AnjoyCommClient("x"); c.sock = _FakeSock()
+        with self.assertRaises(AnjoyError):
+            c.set_network(ip="10.0.0.9")
+
+
 if __name__ == "__main__":
     unittest.main()
