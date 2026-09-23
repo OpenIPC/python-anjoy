@@ -184,8 +184,9 @@ control, ONVIF, web), so a change affects them all. Write — `confirm=True`.
 Network — code **325** = `NetworkConfig/LANConfig` (`<LANConfig MacAddress DHCP
 IPAddress Netmask Gateway DNS1 DNS2 hostname MTU/>`, self-closing).
 `set_network(ip=, netmask=, gateway=, dns1=, dns2=, dhcp=, hostname=, mtu=,
-confirm=True)` read-modify-writes it (only the given fields change; `MacAddress`
-etc. preserved). Verified live on MTF45-4G_AF: a reversible DNS2 change (IP
+confirm=True)` sends a partial `<LANConfig …/>` with only the given fields, which
+the device merges (`MacAddress` etc. untouched; no read-back, so rapid successive
+calls can't resend stale values while an earlier async write is still landing). Verified live on MTF45-4G_AF: a reversible DNS2 change (IP
 preserved), and a **DHCP↔static switch** (static→`DHCP=1`→back to static
 `10.216.128.149`). ⚠️ Changing `ip`/`netmask`/`gateway` or enabling `dhcp` can
 move the camera — reconnect at, or `anjoy.discovery.discover()`, the new address.

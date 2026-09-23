@@ -707,7 +707,8 @@ class TestDownload(unittest.TestCase):
                 b'DNS2="8.8.8.8" hostname="cam" MTU="1500" />'
                 b'</NetworkConfig></IPCConfig>')
 
-    def test_set_network_changes_and_preserves(self):
+    def test_set_network_sends_only_given_fields(self):
+        import xml.etree.ElementTree as ET
         with FakeCommServer() as srv:
             srv.download_content = self._LAN_CFG
             c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
@@ -716,23 +717,30 @@ class TestDownload(unittest.TestCase):
             c.close()
         code, sect = srv.config_sets[0]
         self.assertEqual(code, "325")
-        self.assertIn(b'IPAddress="10.0.0.9"', sect)       # changed
-        self.assertIn(b'DHCP="1"', sect)                   # bool -> 1
-        self.assertIn(b'DNS2="9.9.9.9"', sect)
-        self.assertIn(b'MacAddress="AA:BB"', sect)         # preserved
-        self.assertIn(b'Gateway="10.0.0.1"', sect)         # untouched field preserved
+        root = ET.fromstring(sect.decode("gb2312"))
+        self.assertEqual(root.tag, "LANConfig")
+        self.assertEqual(root.attrib, {"IPAddress": "10.0.0.9", "DHCP": "1",
+                                       "DNS2": "9.9.9.9"})   # bool -> 1; nothing else
 
-    def test_set_network_only_changes_given_fields(self):
+    def test_set_network_consecutive_writes_dont_resend_stale(self):
+        import xml.etree.ElementTree as ET
+        # the device applies writes asynchronously, so the config download may
+        # still show pre-write values; a second call must not echo them back.
         with FakeCommServer() as srv:
             srv.download_content = self._LAN_CFG
             c = AnjoyCommClient("127.0.0.1", "admin", "123456", port=srv.port)
             c.connect(); c.login()
-            c.set_network(dns1="1.0.0.1", confirm=True)     # only DNS1
+            c.set_network(dns1="1.0.0.1", confirm=True)
+            c.set_network(dns2="9.9.9.9", confirm=True)
             c.close()
-        _, sect = srv.config_sets[0]
-        self.assertIn(b'DNS1="1.0.0.1"', sect)
-        self.assertIn(b'IPAddress="10.0.0.5"', sect)        # unchanged
-        self.assertIn(b'DHCP="0"', sect)                    # unchanged
+        (_, first), (_, second) = srv.config_sets
+        self.assertEqual(ET.fromstring(first).attrib, {"DNS1": "1.0.0.1"})
+        self.assertEqual(ET.fromstring(second).attrib, {"DNS2": "9.9.9.9"})
+
+    def test_set_network_rejects_empty(self):
+        c = AnjoyCommClient("x"); c.sock = _FakeSock()
+        with self.assertRaises(ValueError):
+            c.set_network(confirm=True)
 
     def test_set_network_requires_confirm(self):
         from anjoy.exceptions import AnjoyError
