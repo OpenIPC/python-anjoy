@@ -108,6 +108,8 @@ class FakeCommServer:
         self.upload_data = b""
         self.upload_expected = 0
         self.config_sets = []        # list of (code, section_body_bytes) from SET
+        self.truncate_downloads = 0  # serve this many downloads short of FileLength
+        self.downloads = 0           # download announces handled
         self.download_content = b'<?xml version="1.0" encoding="GB2312" ?><IPCConfig><SystemConfig/></IPCConfig>'
         self.srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -202,6 +204,11 @@ class FakeCommServer:
                 elif mt == "SYSTEM_CONTROL_MESSAGE" and b'"1023"' in body:
                     # file-download announce -> RESPONSE_PARAM(FileLength) then data
                     data = self.download_content
+                    self.downloads += 1
+                    sent = data
+                    if self.truncate_downloads > 0:     # clean EOF, but short
+                        self.truncate_downloads -= 1
+                        sent = data[:len(data) // 2]
                     resp = ('<?xml version="1.0" encoding="GB2312" ?>\n<XML_TOPSEE>\n'
                             '<MESSAGE_HEADER\nMsg_type="SYSTEM_CONTROL_MESSAGE"\n'
                             'Msg_code="1023"\nMsg_flag="0"\n/>\n<MESSAGE_BODY>\n'
@@ -211,13 +218,13 @@ class FakeCommServer:
                     env = ('<?xml version="1.0" encoding="GB2312" ?>\n<XML_TOPSEE>\n'
                            '<MESSAGE_HEADER Msg_type="MEDIA_DATA_MESSAGE" Msg_code="2" '
                            'Msg_flag="0" />\n<MESSAGE_BODY>\n'
-                           f'<POS FileStartPos="0" StartPos="0" DataLen="{len(data)}" />\n'
+                           f'<POS FileStartPos="0" StartPos="0" DataLen="{len(sent)}" />\n'
                            '</MESSAGE_BODY>\n</XML_TOPSEE>').encode("gb2312")
-                    conn.sendall(self.MAGIC + struct.pack("<I", len(env)+4+len(data)) + env + b"\x00\x00\x00\x00" + data)
+                    conn.sendall(self.MAGIC + struct.pack("<I", len(env)+4+len(sent)) + env + b"\x00\x00\x00\x00" + sent)
                     eof = ('<?xml version="1.0" encoding="GB2312" ?>\n<XML_TOPSEE>\n'
                            '<MESSAGE_HEADER Msg_type="MEDIA_DATA_MESSAGE" Msg_code="2" '
                            'Msg_flag="0" />\n<MESSAGE_BODY>\n'
-                           f'<POS FileStartPos="0" StartPos="{len(data)}" DataLen="0" />\n'
+                           f'<POS FileStartPos="0" StartPos="{len(sent)}" DataLen="0" />\n'
                            '</MESSAGE_BODY>\n</XML_TOPSEE>').encode("gb2312")
                     conn.sendall(self._frame(eof, null_term=False))
                 elif mt == "SYSTEM_CONFIG_SET_MESSAGE":
