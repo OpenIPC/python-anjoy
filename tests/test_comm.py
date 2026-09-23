@@ -357,6 +357,12 @@ class TestDownload(unittest.TestCase):
         self.assertEqual(data, srv.download_content)
         self.assertEqual(srv.downloads, 2)                  # one truncated, one good
 
+    def test_download_rejects_negative_retries(self):
+        c = AnjoyCommClient("x"); c.sock = _FakeSock()
+        with self.assertRaises(ValueError):
+            c.download_file("/mnt/nand/config.xml", retries=-1)
+        self.assertEqual(c.sock.sent, b"")                  # nothing requested
+
     def test_download_gives_up_after_retries(self):
         from anjoy.exceptions import AnjoyError
         with FakeCommServer() as srv:

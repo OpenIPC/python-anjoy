@@ -358,7 +358,9 @@ class AnjoyCommClient:
         *retries* times, *retry_delay* seconds apart: seen live on MTF45-4G_AF
         right after a LAN config write, while the device re-applies the network.
         """
-        for attempt in range(retries + 1):
+        if int(retries) < 0:
+            raise ValueError("retries must be >= 0")
+        for attempt in range(int(retries) + 1):
             try:
                 return self._download_once(remote_path)
             except _IncompleteDownload as e:
