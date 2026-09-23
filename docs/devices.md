@@ -182,15 +182,20 @@ it, then reverted. This account is the login for **every** service (binary
 control, ONVIF, web), so a change affects them all. Write — `confirm=True`.
 
 Network — code **325** = `NetworkConfig/LANConfig` (`<LANConfig MacAddress DHCP
-IPAddress Netmask Gateway DNS1 DNS2 hostname MTU/>`, self-closing).
+dhcpOffTime ALLNET IPAddress Netmask Gateway DNS1 DNS2 hostname MTU/>`,
+self-closing; `dhcpOffTime`/`ALLNET` meaning unknown, seen as `255`/`0`).
 `set_network(ip=, netmask=, gateway=, dns1=, dns2=, dhcp=, hostname=, mtu=,
 confirm=True)` sends a partial `<LANConfig …/>` with only the given fields, which
-the device merges (`MacAddress` etc. untouched; no read-back, so rapid successive
-calls can't resend stale values while an earlier async write is still landing). Verified live on MTF45-4G_AF: a reversible DNS2 change (IP
-preserved), and a **DHCP↔static switch** (static→`DHCP=1`→back to static
-`10.216.128.149`). ⚠️ Changing `ip`/`netmask`/`gateway` or enabling `dhcp` can
-move the camera — reconnect at, or `anjoy.discovery.discover()`, the new address.
-Write — `confirm=True`.
+the device merges (no read-back, so rapid successive calls can't resend stale
+values while an earlier async write is still landing). Verified live on
+MTF45-4G_AF: a partial DNS2 round-trip (`8.8.8.8`→`9.9.9.9`→back) changed only
+DNS2 — every other attribute, `dhcpOffTime`/`ALLNET` included, stayed put and the
+restored section matched the original exactly; and a **DHCP↔static switch**
+(static→`DHCP=1`→back to static `10.216.128.149`). ⚠️ Changing
+`ip`/`netmask`/`gateway` or enabling `dhcp` can move the camera — reconnect at, or
+`anjoy.discovery.discover()`, the new address. A config download issued right
+after a LAN write can come back truncated while the device re-applies the network
+settings. Write — `confirm=True`.
 
 Both verified live with a set-then-restore round-trip. Config attributes are read
 back from the full-config download, which formats each attribute on its own line —
