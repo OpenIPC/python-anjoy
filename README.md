@@ -24,7 +24,7 @@ python-anjoy focuses on the **vendor-specific glue** ONVIF cannot give you:
 - **RTSP URL helper** for Anjoy's confirmed query-param + MD5-password scheme
   (`anjoy.rtsp.anjoy_rtsp_url`).
 
-A **legacy** web client for the *older* 2024 firmware generation (SOAP + fixed-key
+A **legacy** web client for the *older* firmware generation (SOAP + fixed-key
 DES `"WebLogin"` auth) also lives here (`anjoy/soap.py`, `anjoy/client.py`,
 `anjoy/aio.py`). It is byte-exact against the vendor `des.js` but **unverified on
 hardware**, and the endpoints it uses are **not served on current firmware** (they
@@ -59,7 +59,7 @@ Factory defaults: IP `192.168.0.123/24`, web `admin` / `123456`.
 
 ## The two Anjoy generations
 
-| | Older (2024: MC-K45, MC-040-4G, …) | Current (2026: MTF45-4G_AF) |
+| | Older (MC-K45, MC-040-4G, …) | Current (MTF45-4G_AF) |
 |---|---|---|
 | Standard control | custom web API (SOAP + DES) — legacy module here | **ONVIF** (use any ONVIF client) |
 | Video | RTSP | RTSP (`/stream0`, `/stream1`; MD5-password query auth) |

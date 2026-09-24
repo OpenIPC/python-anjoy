@@ -7,7 +7,7 @@ Sibling of python-dhip; same layering discipline. MIT, no runtime dependencies.
 a standard ONVIF+RTSP device — do NOT reimplement device/PTZ/stream control here;
 use ONVIF. This repo owns the vendor-only glue: LAN discovery (AJ UDP probe) and
 the binary AJ protocol on comm_server:8091 (capture-gated). The SOAP/DES modules
-(soap.py/client.py/aio.py) are a LEGACY client for the older 2024 firmware
+(soap.py/client.py/aio.py) are a LEGACY client for the older firmware
 generation — validated against des.js but unverified on hardware, and not served
 on current firmware. Keep them; don't grow them.
 

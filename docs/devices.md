@@ -2,7 +2,7 @@
 
 ## MC-F45 — model `MTF45-4G_AF` (ONVIF `ONVIF_ICAMERA`)
 
-Confirmed on a live sample (2026-09-22), firmware **V3.4.5.6 (build 2026-01-06)**,
+Confirmed on a live sample, firmware **V3.4.5.6 (build 2026-01-06)**,
 serial `EF0000000BF45324`.
 
 ### Open ports
@@ -38,7 +38,7 @@ password.
 > (SOAP + DES `"WebLogin"`), `/login` + Dahua RPC2, `/getPtzConfig` etc. — are
 > **not** served as distinct handlers here: every POST path falls through to the
 > ONVIF gSOAP dispatcher and faults. That web-UI code is generic and inactive on
-> this generation. The DES/SOAP client under `anjoy/` targets the *older* 2024
+> this generation. The DES/SOAP client under `anjoy/` targets the *older*
 > firmware generation (MC-K45 etc.) and is unverified on hardware.
 
 ### Vendor-specific = the binary AJ protocol on 8091 (`comm_server`)
@@ -64,7 +64,7 @@ end-to-end against the device.
   detected"). Raw capture: `../MC-F45-4MP-PTZ18x/aj8091-capture.{tx,rx}.bin` in the
   research repo.
 
-#### PTZ / lens — AJ verbs vs. ONVIF (verified live 2026-09-24)
+#### PTZ / lens — AJ verbs vs. ONVIF (verified live)
 Tested on a bare zoom-block module (motorized zoom lens, **no pan/tilt head**),
 verified by watching the RTSP stream — not by replies. Two traps:
 
