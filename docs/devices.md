@@ -2,7 +2,7 @@
 
 ## MC-F45 — model `MTF45-4G_AF` (ONVIF `ONVIF_ICAMERA`)
 
-Confirmed on a live sample (2026-09-22), firmware **V3.4.5.6 (build 2026-01-06)**,
+Confirmed on a live sample, firmware **V3.4.5.6 (build 2026-01-06)**,
 serial `EF0000000BF45324`.
 
 ### Open ports
@@ -38,7 +38,7 @@ password.
 > (SOAP + DES `"WebLogin"`), `/login` + Dahua RPC2, `/getPtzConfig` etc. — are
 > **not** served as distinct handlers here: every POST path falls through to the
 > ONVIF gSOAP dispatcher and faults. That web-UI code is generic and inactive on
-> this generation. The DES/SOAP client under `anjoy/` targets the *older* 2024
+> this generation. The DES/SOAP client under `anjoy/` targets the *older*
 > firmware generation (MC-K45 etc.) and is unverified on hardware.
 
 ### Vendor-specific = the binary AJ protocol on 8091 (`comm_server`)
@@ -63,6 +63,35 @@ end-to-end against the device.
   and `ALARM_REPORT_MESSAGE` **pushed by the camera** (e.g. "video Human shape
   detected"). Raw capture: `../MC-F45-4MP-PTZ18x/aj8091-capture.{tx,rx}.bin` in the
   research repo.
+
+#### PTZ / lens — AJ verbs vs. ONVIF (verified live)
+Tested on a bare zoom-block module (motorized zoom lens, **no pan/tilt head**),
+verified by watching the RTSP stream — not by replies. Two traps:
+
+- `comm_server` **ACKs `PTZ_CMD` (empty body) even when the PTZ/lens board is
+  unpowered** — an ACK does not mean the lens moved.
+- ONVIF `GetStatus` always reports PanTilt `0,0` / Zoom `0` (even at 16×), despite
+  `StatusPosition="true"`. No position feedback; use the video/OSD (`NX KF`).
+
+| Function | AJ (`AnjoyCommClient.ptz`) | ONVIF | Live result |
+|---|---|---|---|
+| Zoom in/out | `zoomtele` / `zoomwide` → `stop` | PTZ `ContinuousMove` Zoom x ∈ [-1,1] → `Stop` | **both work** (AJ: 1×→16× in 4 s; ONVIF x=0.5: →19× in 4 s) |
+| Focus near/far | `FocusNearAutoOff` / `FocusFarAutoOff` → `stop` | Imaging `Move` Continuous Speed (±; options say 1–10) → Imaging `Stop` | **both work**; ONVIF `+5` defocused and `-5` refocused this scene. AF mode reports `MANUAL` only |
+| Pan/tilt (4 dirs + diagonals) | `up`/`down`/`left`/`right`/`left_up`/… → `stop` | `ContinuousMove` PanTilt x,y ∈ [-1,1] | accepted by both; untestable here (no PT head) |
+| Stop | `stop` (all axes) | `Stop` with `PanTilt`/`Zoom` flags | works (zoom, focus) |
+| Speed | `panspeed`/`tiltspeed` ints (range unknown; also sent with zoom verbs, effect unknown) | velocity magnitude; `DefaultPTZSpeed` 1 | — |
+| Iris | `IrisOpenAutoOff` / `IrisCloseAutoOff` | no iris move (Imaging exposure AUTO/MANUAL only) | untested |
+| Presets | not in `comm.py` (legacy SOAP only, not served here) | `SetPreset`/`GotoPreset`/`RemovePreset`, 255 slots, all tokens `1`–`255` listed | untested |
+| Magic presets (`const.PTZ_MAGIC_PRESETS`) | — | presumably `GotoPreset` with the same number | unverified |
+| PTZ restore/reboot | `PtzRestore` / `PtzReboot` | none (only device `SystemReboot`) | untested |
+| Home | — | `GotoHomePosition`/`SetHomePosition` (`HomeSupported=true`) | untested |
+| Absolute/relative move | — | `AbsoluteMove`/`RelativeMove` (generic spaces advertised) | untested |
+| Aux | — | `tt:Wiper\|On/Off`, `tt:Lamp\|On/Off` | untested |
+| Tours | — | `GetPresetTours` → empty | — |
+
+Safety difference: ONVIF continuous moves self-stop after `DefaultPTZTimeout`
+(`PT1M`); AJ moves run until `stop` arrives, so a dropped connection leaves the
+motor driving to its end stop.
 
 #### File upload + EXECUTE_USER_CMD — transport CONFIRMED, execution gated
 Captured from AjDevTools "Upload config" and reproduced against a live
